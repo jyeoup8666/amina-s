@@ -1,0 +1,9 @@
+{
+  "name": "line-facility-webhook",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@line/bot-sdk": "^7.5.0",
+    "firebase-admin": "^11.11.0"
+  }
+}
