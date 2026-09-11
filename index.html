@@ -1364,8 +1364,9 @@
                 <td><select class="status-silicon"><option>양호</option><option>점검필요</option></select></td>
                 <td><select class="status-noise"><option>양호</option><option>점검필요</option></select></td>
                 <td>
-                    <input type="file" accept="image/*" onchange="previewAndCompressImage(this, 'boiler', ${index})">
+                    <input type="file" id="boiler-img-input-${index}" accept="image/*" onchange="previewAndCompressImage(this, 'boiler', ${index})">
                     <img id="boiler-preview-${index}" class="img-preview hidden" onclick="openImageModal(this.src)" title="클릭하여 확대">
+                    <button type="button" id="del-boiler-preview-${index}" class="btn-small-danger hidden" style="margin-top:4px;" onclick="deletePhoto('boiler-preview-${index}', 'boiler-img-input-${index}')">사진 삭제</button>
                 </td>
                 <td><input type="text" class="table-input repair-detail" placeholder="수리 내용 입력"></td>
                 <td><input type="text" class="table-input repair-cost" placeholder="0" oninput="formatCurrency(this)"></td>
@@ -1430,11 +1431,27 @@
 
                 preview.src = compressedDataUrl;
                 preview.classList.remove('hidden');
+                const delBtn = document.getElementById('del-' + previewId);
+                if (delBtn) delBtn.classList.remove('hidden');
                 if (onDone) onDone(compressedDataUrl);
             };
             img.src = e.target.result;
         };
         reader.readAsDataURL(file);
+    }
+
+    // 현장 사진 삭제: 미리보기/삭제 버튼을 숨기고 파일 입력값도 초기화합니다.
+    // (이후 저장하기를 누르면 사진 없이 저장/갱신됩니다. previewId 규칙: 삭제 버튼 id는 항상 'del-' + previewId)
+    function deletePhoto(previewId, inputId) {
+        const preview = document.getElementById(previewId);
+        if (preview) {
+            preview.src = '';
+            preview.classList.add('hidden');
+        }
+        const fileInput = document.getElementById(inputId);
+        if (fileInput) fileInput.value = '';
+        const delBtn = document.getElementById('del-' + previewId);
+        if (delBtn) delBtn.classList.add('hidden');
     }
 
     // 기존 보일러/소방 일괄 작성표에서 쓰던 호출 방식과의 호환용 래퍼
@@ -1593,12 +1610,15 @@
                 document.querySelectorAll('#page-boiler-form .status-noise')[index].value = data.noise || '양호';
 
                 const preview = document.getElementById(`boiler-preview-${index}`);
+                const delBtn = document.getElementById(`del-boiler-preview-${index}`);
                 if (data.imgSrc) {
                     preview.src = data.imgSrc;
                     preview.classList.remove('hidden');
+                    if (delBtn) delBtn.classList.remove('hidden');
                 } else {
                     preview.src = '';
                     preview.classList.add('hidden');
+                    if (delBtn) delBtn.classList.add('hidden');
                 }
 
                 document.querySelectorAll('#page-boiler-form .repair-detail')[index].value = data.repairDetail || '';
@@ -2851,7 +2871,10 @@ function enterBoilerQrCheckMode(room) {
             <p style="margin-top:15px;">
                 현장 사진 (선택):<br>
                 <input type="file" id="qr-check-img-input" accept="image/*" capture="environment" style="margin-top:5px;" onchange="compressImageToPreview(this, 'qr-check-preview')">
+                <br>
                 <img id="qr-check-preview" class="img-preview hidden" style="max-width:160px; max-height:160px; margin-top:8px;" onclick="openImageModal(this.src)" title="클릭하여 확대">
+                <br>
+                <button type="button" id="del-qr-check-preview" class="btn-small-danger hidden" style="margin-top:6px;" onclick="deletePhoto('qr-check-preview', 'qr-check-img-input')">사진 삭제</button>
             </p>
             <p style="margin-top:15px;">
                 수리 내용 (이상 있을 때만 입력):<br>
