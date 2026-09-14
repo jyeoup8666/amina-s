@@ -1,128 +1,251 @@
-export default async function handler(req, res) {
-  if (req.method === 'POST') {
-    const events = req.body.events || [];
-    const firebaseUrl = 'https://facility-check-74a17-default-rtdb.firebaseio.com/facility_requests';
+// ─────────────────────────────────────────────────────────────
+// 시설요청 봇 + 간호팀 전실안내 겸용 웹훅
+// - 같은 라인 봇 계정이 "시설요청방"과 "간호팀 전실안내방" 두 곳에 모두 들어있는 구조입니다.
+// - event.source.groupId 로 어느 방에서 온 메시지인지 구분해서 처리를 분기합니다.
+//
+// [1단계] 아직 간호팀 방의 groupId를 모르는 상태라면:
+//   - 아래 NURSING_GROUP_ID 를 빈 문자열('')로 둔 채 그냥 배포하세요.
+//   - 간호팀 방에 봇을 초대한 뒤 아무 메시지나 하나 올려보면,
+//     Vercel 대시보드 > 이 프로젝트 > Logs 에서
+//     "[groupId 확인] ..." 로 시작하는 로그 줄에 실제 groupId가 찍힙니다.
+//   - 그 값을 NURSING_GROUP_ID 에 채워넣고 다시 배포하면 그 다음부터
+//     그 방 메시지는 전실 처리 로직으로, 나머지 방은 기존 시설요청 로직으로 갑니다.
+// ─────────────────────────────────────────────────────────────
 
-    for (let event of events) {
+const NURSING_GROUP_ID = ''; // 예: 'C1234567890abcdef1234567890abcd' - 확인되면 채워넣기
 
-      // ─────────────────────────────────────────────
-      // CASE 0 (신규): 메시지를 보내기 취소(unsend)한 경우
-      // - 취소된 게 "원본 요청 메시지"면 요청 자체를 삭제
-      // - 취소된 게 "답장"이면 그 답장만 replies 목록에서 삭제
-      // ─────────────────────────────────────────────
-      if (event.type === 'unsend') {
-        const unsentMessageId = event.unsend.messageId;
-        try {
-          const response = await fetch(`${firebaseUrl}.json`);
-          const data = await response.json();
-          if (data) {
-            const targetKey = Object.keys(data).find(
-              key => data[key].messageId === unsentMessageId
-            );
-            if (targetKey) {
-              await fetch(`${firebaseUrl}/${targetKey}.json`, {
-                method: 'DELETE'
-              });
-              console.log(`취소된 메시지 삭제 완료: ${targetKey}`);
-            } else {
-              // 원본 요청이 아니라면, 답장 중 하나가 취소된 것인지 확인
-              for (const key of Object.keys(data)) {
-                const replies = data[key].replies;
-                if (!replies) continue;
-                const replyKey = Object.keys(replies).find(
-                  rk => replies[rk].messageId === unsentMessageId
-                );
-                if (replyKey) {
-                  await fetch(`${firebaseUrl}/${key}/replies/${replyKey}.json`, {
-                    method: 'DELETE'
-                  });
-                  console.log(`취소된 답장 삭제 완료: ${key}/${replyKey}`);
-                  break;
-                }
-              }
-            }
-          }
-        } catch (error) {
-          console.error('취소 메시지 삭제 중 오류 발생:', error);
-        }
-        continue; // unsend 이벤트는 아래 message 처리와 무관하므로 다음 이벤트로
-      }
+const firebaseUrl = 'https://facility-check-74a17-default-rtdb.firebaseio.com/facility_requests';
+const transferFirebaseUrl = 'https://facility-check-74a17-default-rtdb.firebaseio.com/patient_transfers';
 
-      if (event.type === 'message' && event.message.type === 'text') {
-        const userMessage = event.message.text.trim();
-        const messageId = event.message.id; // 현재 메시지 ID
-        const quotedMessageId = event.message.quotedMessageId; // 답장 대상 원본 메시지 ID
+// ───────────── 전실 메시지 파싱 (간호팀 방 전용) ─────────────
+const ROOM_RE = () => /(\d{3})\s*호?\s*-\s*(\d{1,2})\s*호?|(\d{3})\s*호?/g;
+const FILLER_RE = /^(?:\s|호|로|으로|자리|이동|변경|하여|>|<|→|-->|->)+$/;
 
-        // CASE 1: 특정 메시지에 '답장'을 한 경우 -> 답장 대상 요청을 완료 처리
-        if (quotedMessageId) {
-          try {
-            const response = await fetch(`${firebaseUrl}.json`);
-            const data = await response.json();
-            if (data) {
-              // 1) 원본 요청 메시지에 대한 답장인지 확인
-              let targetKey = Object.keys(data).find(
-                key => data[key].messageId === quotedMessageId
-              );
+function findRooms(text) {
+  const rooms = [];
+  const re = ROOM_RE();
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const num = m[1] || m[3];
+    const sub = m[2];
+    rooms.push({ raw: sub ? `${num}-${sub}` : num, start: m.index, end: m.index + m[0].length });
+  }
+  return rooms;
+}
 
-              // 2) 원본이 아니라면, "이전 답장"에 대한 답장(답장에 답장)인지 확인
-              if (!targetKey) {
-                targetKey = Object.keys(data).find(key => {
-                  const replies = data[key].replies;
-                  if (!replies) return false;
-                  return Object.values(replies).some(r => r.messageId === quotedMessageId);
-                });
-              }
+function findNameCandidates(text) {
+  const names = [];
+  let m;
+  const re1 = /([가-힣]{2,4}\d?)님/g;
+  while ((m = re1.exec(text)) !== null) {
+    names.push({ name: m[1], start: m.index });
+  }
+  const re2 = /([가-힣]{2,4}\d?)\s*(?:-->|→|->)/g;
+  while ((m = re2.exec(text)) !== null) {
+    if (!names.some(n => n.start === m.index)) {
+      names.push({ name: m[1], start: m.index });
+    }
+  }
+  names.sort((a, b) => a.start - b.start);
+  return names;
+}
 
-              if (targetKey) {
-                // 답장을 replies 목록에 "추가" (기존 답장을 덮어쓰지 않고 계속 쌓입니다)
-                // 이 답장 자체의 messageId도 함께 저장해서, 나중에 "이 답장"에 또 답장이 달려도 추적할 수 있게 합니다.
-                await fetch(`${firebaseUrl}/${targetKey}/replies.json`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    message: userMessage,
-                    timestamp: Date.now(),
-                    messageId: messageId
-                  })
-                });
+function extractTransfers(text) {
+  const rooms = findRooms(text);
+  const names = findNameCandidates(text);
+  const results = [];
 
-                // status/completedAt/replyMessage도 계속 갱신합니다.
-                // (replyMessage는 항상 "가장 최근 답장"을 담고 있으며, 예전 화면과의 호환을 위해 유지합니다.)
-                await fetch(`${firebaseUrl}/${targetKey}.json`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    status: 'completed',
-                    completedAt: Date.now(),
-                    replyMessage: userMessage
-                  })
-                });
-                console.log(`답장 대상 수리요청 완료 처리 완료: ${targetKey}`);
-              }
-            }
-          } catch (error) {
-            console.error('답장 완료 처리 중 오류 발생:', error);
-          }
-        }
-        // CASE 2: 신규 수리 요청 메시지인 경우 -> DB에 저장
-        else {
-          try {
-            await fetch(`${firebaseUrl}.json`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                messageId: messageId, // 답장 추적 및 취소 감지를 위해 LINE 메시지 ID 함께 저장
-                text: userMessage,
-                timestamp: Date.now(),
-                status: 'pending'
-              })
-            });
-          } catch (error) {
-            console.error('Firebase 저장 실패:', error);
-          }
+  const verbRe = /전실/g;
+  let vm;
+  while ((vm = verbRe.exec(text)) !== null) {
+    const anchorIdx = vm.index;
+    let destRoom = null;
+    for (let i = rooms.length - 1; i >= 0; i--) {
+      const r = rooms[i];
+      if (r.end <= anchorIdx) {
+        const gap = text.slice(r.end, anchorIdx);
+        if (gap.trim() === '' || FILLER_RE.test(gap)) {
+          destRoom = r;
+          break;
         }
       }
     }
+    if (!destRoom) continue;
+
+    let bestName = null;
+    for (let i = names.length - 1; i >= 0; i--) {
+      if (names[i].start < destRoom.start) {
+        bestName = names[i];
+        break;
+      }
+    }
+    if (!bestName) continue;
+
+    results.push({ patientName: bestName.name, destRoom: destRoom.raw });
+  }
+
+  const seen = new Set();
+  return results.filter(r => {
+    const key = `${r.patientName}|${r.destRoom}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function handleNursingGroupMessage(event) {
+  const userMessage = event.message.text.trim();
+  const messageId = event.message.id;
+  const transfers = extractTransfers(userMessage);
+
+  if (transfers.length === 0) return; // 전실 안내가 아니면 그냥 무시
+
+  for (const t of transfers) {
+    try {
+      await fetch(`${transferFirebaseUrl}.json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientName: t.patientName,
+          destRoom: t.destRoom,
+          rawText: userMessage,
+          messageId: messageId,
+          timestamp: Date.now(),
+          status: 'pending'
+        })
+      });
+    } catch (error) {
+      console.error('전실 정보 저장 실패:', error);
+    }
+  }
+}
+
+// ───────────── 기존 시설요청 로직 (그대로) ─────────────
+
+async function handleFacilityGroupEvent(event) {
+  if (event.type === 'unsend') {
+    const unsentMessageId = event.unsend.messageId;
+    try {
+      const response = await fetch(`${firebaseUrl}.json`);
+      const data = await response.json();
+      if (data) {
+        const targetKey = Object.keys(data).find(
+          key => data[key].messageId === unsentMessageId
+        );
+        if (targetKey) {
+          await fetch(`${firebaseUrl}/${targetKey}.json`, { method: 'DELETE' });
+          console.log(`취소된 메시지 삭제 완료: ${targetKey}`);
+        } else {
+          for (const key of Object.keys(data)) {
+            const replies = data[key].replies;
+            if (!replies) continue;
+            const replyKey = Object.keys(replies).find(
+              rk => replies[rk].messageId === unsentMessageId
+            );
+            if (replyKey) {
+              await fetch(`${firebaseUrl}/${key}/replies/${replyKey}.json`, { method: 'DELETE' });
+              console.log(`취소된 답장 삭제 완료: ${key}/${replyKey}`);
+              break;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('취소 메시지 삭제 중 오류 발생:', error);
+    }
+    return;
+  }
+
+  if (event.type === 'message' && event.message.type === 'text') {
+    const userMessage = event.message.text.trim();
+    const messageId = event.message.id;
+    const quotedMessageId = event.message.quotedMessageId;
+
+    if (quotedMessageId) {
+      try {
+        const response = await fetch(`${firebaseUrl}.json`);
+        const data = await response.json();
+        if (data) {
+          let targetKey = Object.keys(data).find(
+            key => data[key].messageId === quotedMessageId
+          );
+          if (!targetKey) {
+            targetKey = Object.keys(data).find(key => {
+              const replies = data[key].replies;
+              if (!replies) return false;
+              return Object.values(replies).some(r => r.messageId === quotedMessageId);
+            });
+          }
+          if (targetKey) {
+            await fetch(`${firebaseUrl}/${targetKey}/replies.json`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: userMessage,
+                timestamp: Date.now(),
+                messageId: messageId
+              })
+            });
+            await fetch(`${firebaseUrl}/${targetKey}.json`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                status: 'completed',
+                completedAt: Date.now(),
+                replyMessage: userMessage
+              })
+            });
+            console.log(`답장 대상 수리요청 완료 처리 완료: ${targetKey}`);
+          }
+        }
+      } catch (error) {
+        console.error('답장 완료 처리 중 오류 발생:', error);
+      }
+    } else {
+      try {
+        await fetch(`${firebaseUrl}.json`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messageId: messageId,
+            text: userMessage,
+            timestamp: Date.now(),
+            status: 'pending'
+          })
+        });
+      } catch (error) {
+        console.error('Firebase 저장 실패:', error);
+      }
+    }
+  }
+}
+
+// ───────────── 진입점: 방(groupId)에 따라 분기 ─────────────
+
+export default async function handler(req, res) {
+  if (req.method === 'POST') {
+    const events = req.body.events || [];
+
+    for (const event of events) {
+      const groupId = event.source && event.source.groupId;
+
+      // groupId 확인용 임시 로그 - NURSING_GROUP_ID를 채워넣고 나면 지워도 됩니다.
+      if (groupId && groupId !== NURSING_GROUP_ID) {
+        console.log('[groupId 확인] 이 이벤트가 온 방의 groupId:', groupId);
+      }
+
+      if (NURSING_GROUP_ID && groupId === NURSING_GROUP_ID) {
+        if (event.type === 'message' && event.message.type === 'text') {
+          await handleNursingGroupMessage(event);
+        }
+        // 간호팀 방에서는 unsend/답장 처리 로직은 적용하지 않습니다.
+        continue;
+      }
+
+      // 그 외(=시설요청방 등)는 기존 로직 그대로 처리
+      await handleFacilityGroupEvent(event);
+    }
+
     return res.status(200).json({ message: 'OK' });
   }
   res.status(200).send('LINE Webhook Server is Running!');
