@@ -3138,6 +3138,15 @@ function accessoryTypeInfo(key) {
     return ACCESSORY_TYPES.find(a => a.key === key) || null;
 }
 
+// 환자/직원이 입력한 텍스트를 input의 value="..." 속성에 안전하게 채워 넣기 위한 이스케이프입니다.
+function escapeAttr(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 // '301-2' 같은 자리번호에서 병실번호('301')와 층('3F')을 뽑아냅니다.
 function getPositionRoom(position) {
     return (position || '').split('-')[0];
@@ -3401,6 +3410,16 @@ async function enterPositionQrCheckMode(position) {
         activeByAcc[d.accessoryType] = { ...d, _docId: doc.id };
     });
 
+    // 아직 신청 안 한 물품 종류가 하나라도 있으면(=지금 새로 신청할 수 있으면) 성함 입력란을 보여줍니다.
+    // 성함은 적어주시면 좋지만 필수는 아니며 - 안 적으시면 나중에 직원이 전달할 때 확인해서 적습니다.
+    const hasEmptySlot = ACCESSORY_TYPES.some(acc => !activeByAcc[acc.key]);
+    const patientNameFieldHtml = hasEmptySlot ? `
+        <div style="margin-bottom:12px;">
+            <label style="font-size:13px; color:#495057; display:block; margin-bottom:4px;">환자분 성함 (선택사항)</label>
+            <input type="text" id="pos-patient-name-input" class="table-input" style="width:100%;" placeholder="성함을 적어주시면 더 빠르게 확인할 수 있어요">
+        </div>
+    ` : '';
+
     const rowsHtml = ACCESSORY_TYPES.map(acc => {
         const active = activeByAcc[acc.key];
 
@@ -3467,6 +3486,7 @@ async function enterPositionQrCheckMode(position) {
         <div class="qr-check-card">
             <h2 style="margin-top:0; text-align:center;">🛏️ ${position}</h2>
             <p style="font-size:13px; color:#6c757d; text-align:center;">필요하신 물품을 O로 선택하신 뒤 아래 버튼을 눌러주세요.</p>
+            ${patientNameFieldHtml}
             ${rowsHtml}
             <button class="save-btn" style="margin-top:15px;" onclick="submitPositionRequests('${position}')">✅ 선택한 물품 요청하기</button>
             <div id="qr-check-result" style="margin-top:15px; text-align:center; font-weight:bold;"></div>
@@ -3503,6 +3523,11 @@ async function submitPositionRequests(position) {
         return;
     }
 
+    // 환자분 성함은 선택사항입니다 - 적어주시면 저장해두고, 안 적으시면 빈 채로 두었다가
+    // 나중에 직원이 전달할 때 확인해서 적습니다.
+    const nameInput = document.getElementById('pos-patient-name-input');
+    const patientName = nameInput ? nameInput.value.trim() : '';
+
     resultEl.style.color = '#6c757d';
     resultEl.textContent = '요청 중...';
 
@@ -3521,7 +3546,7 @@ async function submitPositionRequests(position) {
                 status: 'requested',
                 requestBatchId: batchId,
                 requestedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                patientName: '',
+                patientName: patientName,
                 checkoutDate: '',
                 checkoutStaff: '',
                 returnDate: '',
@@ -3601,6 +3626,9 @@ async function deliverPositionBatch(loanDocIds) {
         return `${acc.icon} ${acc.label}`;
     }).join(', ');
 
+    // 환자가 신청할 때 직접 성함을 적어뒀으면 그대로 채워서 보여주고(직원은 확인만),
+    // 안 적었으면 빈 칸으로 두어 직원이 직접 입력하게 합니다.
+    const patientNameFromRequest = (validDocs.find(d => d.patientName) || {}).patientName || '';
     const cachedName = localStorage.getItem('inspector_name_cache') || '';
     const idsLiteral = validDocs.map(d => `'${d._docId}'`).join(',');
 
@@ -3609,8 +3637,8 @@ async function deliverPositionBatch(loanDocIds) {
             <h2 style="margin-top:0;">${first.position || ''} 전달완료 처리</h2>
             <div class="info-box" style="margin-bottom:15px;">신청 물품: ${labelList}</div>
             <p style="margin-top:10px;">
-                환자분 성함: <input type="text" id="deliver-patient-name" class="table-input" style="width:100%;" placeholder="이름 입력"><br><br>
-                전달 직원: <input type="text" id="deliver-staff-name" class="table-input" style="width:100%;" placeholder="이름 입력" value="${cachedName}">
+                환자분 성함: <input type="text" id="deliver-patient-name" class="table-input" style="width:100%;" placeholder="이름 입력" value="${escapeAttr(patientNameFromRequest)}"><br><br>
+                전달 직원: <input type="text" id="deliver-staff-name" class="table-input" style="width:100%;" placeholder="이름 입력" value="${escapeAttr(cachedName)}">
             </p>
             <button class="save-btn" onclick="confirmDeliverBatch([${idsLiteral}])">☁️ 전달완료 처리</button>
             <button class="back-btn" style="margin-top:10px;" onclick="document.getElementById('facility-position-detail').innerHTML=''">취소</button>
