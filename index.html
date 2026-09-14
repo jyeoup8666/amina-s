@@ -708,20 +708,17 @@
                 <table>
                     <thead>
                         <tr>
-                            <th>구분</th>
                             <th>위치</th>
-                            <th>병실</th>
+                            <th>구분</th>
                             <th>환자명</th>
                             <th>제공일자</th>
-                            <th>스탠드</th>
-                            <th>이어폰</th>
-                            <th>충전기</th>
                             <th>제공직원</th>
                             <th>반납사진</th>
+                            <th>처리</th>
                         </tr>
                     </thead>
                     <tbody id="tablet-history-active-body">
-                        <tr><td colspan="10">데이터를 불러오는 중입니다...</td></tr>
+                        <tr><td colspan="7">데이터를 불러오는 중입니다...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -736,14 +733,10 @@
                 <table>
                     <thead>
                         <tr>
-                            <th>구분</th>
                             <th>위치</th>
-                            <th>병실</th>
+                            <th>구분</th>
                             <th>환자명</th>
                             <th>제공일자</th>
-                            <th>스탠드</th>
-                            <th>이어폰</th>
-                            <th>충전기</th>
                             <th>제공직원</th>
                             <th>회수일시</th>
                             <th>회수직원</th>
@@ -751,11 +744,13 @@
                         </tr>
                     </thead>
                     <tbody id="tablet-history-completed-body">
-                        <tr><td colspan="12">데이터를 불러오는 중입니다...</td></tr>
+                        <tr><td colspan="8">데이터를 불러오는 중입니다...</td></tr>
                     </tbody>
                 </table>
             </div>
         </div>
+
+        <div id="tablet-history-detail"></div>
     </div>
 
     <!-- 자리별 QR코드 라벨 생성/인쇄 -->
@@ -1254,8 +1249,16 @@
         activeItems.forEach(entry => {
             allActiveRows.push({ kind: 'facility', entry });
         });
+        // 같은 자리에서 한 번에 여러 물품을 신청한 경우(requestBatchId가 같음) 한 줄로 묶어서 보여줍니다.
+        // (예전에 만들어졌거나 직원이 수동으로 하나씩 등록한 건은 batchId가 없으므로 문서ID를 그대로 묶음키로 씁니다.)
+        const batchMap = new Map();
         latestPositionPendingItems.forEach(d => {
-            allActiveRows.push({ kind: 'position-request', data: d });
+            const key = d.requestBatchId || d._docId;
+            if (!batchMap.has(key)) batchMap.set(key, []);
+            batchMap.get(key).push(d);
+        });
+        batchMap.forEach(items => {
+            allActiveRows.push({ kind: 'position-request-batch', items });
         });
         latestPositionReturnPendingItems.forEach(d => {
             allActiveRows.push({ kind: 'position-return', data: d });
@@ -1264,12 +1267,18 @@
         // 배달 대기중인 물품요청은 시설요청의 "우선(긴급)"과 같은 급으로, 반납 확인 대기는 "일반" 급으로 취급합니다.
         const priorityOf = (row) => {
             if (row.kind === 'facility') return getRequestPriority(row.entry.item.text);
-            if (row.kind === 'position-request') return 2;
+            if (row.kind === 'position-request-batch') return 2;
             return 1;
         };
         const timeOf = (row) => {
             if (row.kind === 'facility') return row.entry.item.timestamp || 0;
-            const ts = row.kind === 'position-request' ? row.data.requestedAt : row.data.returnRequestedAt;
+            if (row.kind === 'position-request-batch') {
+                return row.items.reduce((max, d) => {
+                    const t = (d.requestedAt && typeof d.requestedAt.toMillis === 'function') ? d.requestedAt.toMillis() : 0;
+                    return Math.max(max, t);
+                }, 0);
+            }
+            const ts = row.data.returnRequestedAt;
             return (ts && typeof ts.toMillis === 'function') ? ts.toMillis() : 0;
         };
 
@@ -1279,19 +1288,33 @@
             return timeOf(b) - timeOf(a);
         });
 
-        // ---- 자리별 대여요청/반납신청 행을 만드는 공통 헬퍼 ----
+        // ---- 자리별 대여요청(묶음)/반납신청 행을 만드는 공통 헬퍼 ----
         const positionRowInfo = (row) => {
+            if (row.kind === 'position-request-batch') {
+                const items = row.items;
+                const first = items[0];
+                const labelParts = items.map(d => {
+                    const acc = accessoryTypeInfo(d.accessoryType) || { icon: '🎒', label: '물품' };
+                    return `${acc.icon} ${acc.label}`;
+                });
+                const dateObj = items.reduce((latest, d) => {
+                    const dt = (d.requestedAt && typeof d.requestedAt.toDate === 'function') ? d.requestedAt.toDate() : null;
+                    if (!dt) return latest;
+                    if (!latest || dt > latest) return dt;
+                    return latest;
+                }, null);
+                const idsLiteral = items.map(d => `'${d._docId}'`).join(',');
+                const onclickFn = `deliverPositionBatch([${idsLiteral}])`;
+                const label = `${first.position || '-'} · ${labelParts.join(', ')}`;
+                return { dateObj, onclickFn, badgeText: '물품요청', badgeColor: '#dc3545', actionLabel: '전달완료 처리하기', label, isRequest: true };
+            }
             const d = row.data;
             const acc = accessoryTypeInfo(d.accessoryType) || { icon: '🎒', label: '물품' };
-            const isRequest = row.kind === 'position-request';
-            const ts = isRequest ? d.requestedAt : d.returnRequestedAt;
+            const ts = d.returnRequestedAt;
             const dateObj = (ts && typeof ts.toDate === 'function') ? ts.toDate() : null;
-            const onclickFn = isRequest ? `deliverPositionItem('${d._docId}')` : `openReturnConfirmForm('${d._docId}')`;
-            const badgeText = isRequest ? '물품요청' : '반납신청';
-            const badgeColor = isRequest ? '#dc3545' : '#17a2b8';
-            const actionLabel = isRequest ? '전달완료 처리하기' : '사진 확인 후 회수 처리';
+            const onclickFn = `openReturnConfirmForm('${d._docId}')`;
             const label = `${acc.icon} ${d.position || '-'} · ${acc.label}`;
-            return { dateObj, onclickFn, badgeText, badgeColor, actionLabel, label, isRequest };
+            return { dateObj, onclickFn, badgeText: '반납신청', badgeColor: '#17a2b8', actionLabel: '사진 확인 후 회수 처리', label, isRequest: false };
         };
 
         let activeHtml = '';
@@ -3417,21 +3440,29 @@ async function enterPositionQrCheckMode(position) {
             `;
         }
 
+        // status === 'out' && 반납신청 전: 사진 촬영은 아래 공통 영역에서 한 번에 받으므로 여기서는 상태만 보여줍니다.
         return `
-            <div class="qr-check-row" style="flex-direction:column; align-items:stretch;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div class="qr-check-label">${acc.icon} ${acc.label}</div>
-                    <div style="color:#dc3545; font-size:13px; font-weight:bold;">대여중</div>
-                </div>
-                <div style="margin-top:8px; font-size:12px; color:#6c757d;">반납하실 때 사진을 남겨주시면 좋아요 (선택사항, 안 찍으셔도 반납 처리됩니다).</div>
-                <div style="margin-top:8px;">
-                    <input type="file" id="pos-return-photo-input-${acc.key}" accept="image/*" capture="environment" style="width:100%;">
-                    <img id="pos-return-photo-preview-${acc.key}" class="img-preview hidden" style="max-width:150px; max-height:150px; margin-top:8px;">
-                    <button class="save-btn" style="margin-top:8px; padding:8px;" onclick="submitPositionReturnPhoto('${active._docId}', '${acc.key}', '${position}')">📷 반납 사진 제출</button>
-                </div>
+            <div class="qr-check-row">
+                <div class="qr-check-label">${acc.icon} ${acc.label}</div>
+                <div style="color:#dc3545; font-size:13px; font-weight:bold;">대여중</div>
             </div>
         `;
     }).join('');
+
+    // 지금 대여중이면서 아직 반납신청을 안 한 물품들은, 사진 한 장으로 한꺼번에 반납신청할 수 있게 묶어둡니다.
+    const returnableIds = ACCESSORY_TYPES
+        .map(acc => activeByAcc[acc.key])
+        .filter(active => active && active.status === 'out' && !active.returnRequested)
+        .map(active => active._docId);
+
+    const returnPhotoSectionHtml = returnableIds.length ? `
+        <div style="margin-top:15px; padding-top:15px; border-top:2px dashed #dee2e6;">
+            <p style="font-size:12px; color:#6c757d; text-align:center; margin:0 0 8px;">반납하실 때 사진을 한 번만 찍어주시면 대여중인 물품 전체에 같이 반영돼요 (선택사항, 안 찍으셔도 반납 처리됩니다).</p>
+            <input type="file" id="pos-return-photo-input" accept="image/*" capture="environment" style="width:100%;">
+            <img id="pos-return-photo-preview" class="img-preview hidden" style="max-width:180px; max-height:180px; margin-top:8px; display:block; margin-left:auto; margin-right:auto;">
+            <button class="save-btn" style="margin-top:8px; padding:8px;" onclick="submitPositionReturnPhoto([${returnableIds.map(id => `'${id}'`).join(',')}], '${position}')">📷 반납 사진 제출</button>
+        </div>
+    ` : '';
 
     content.innerHTML = `
         <div class="qr-check-card">
@@ -3440,17 +3471,16 @@ async function enterPositionQrCheckMode(position) {
             ${rowsHtml}
             <button class="save-btn" style="margin-top:15px;" onclick="submitPositionRequests('${position}')">✅ 선택한 물품 요청하기</button>
             <div id="qr-check-result" style="margin-top:15px; text-align:center; font-weight:bold;"></div>
+            ${returnPhotoSectionHtml}
         </div>
     `;
 
-    ACCESSORY_TYPES.forEach(acc => {
-        const input = document.getElementById(`pos-return-photo-input-${acc.key}`);
-        if (input) {
-            input.addEventListener('change', function () {
-                compressImageToPreview(this, `pos-return-photo-preview-${acc.key}`);
-            });
-        }
-    });
+    const returnPhotoInput = document.getElementById('pos-return-photo-input');
+    if (returnPhotoInput) {
+        returnPhotoInput.addEventListener('change', function () {
+            compressImageToPreview(this, 'pos-return-photo-preview');
+        });
+    }
 }
 
 function setPositionRequestToggle(btnEl) {
@@ -3477,6 +3507,10 @@ async function submitPositionRequests(position) {
     resultEl.style.color = '#6c757d';
     resultEl.textContent = '요청 중...';
 
+    // 한 번에 여러 물품을 같이 골랐으면, 같은 batchId를 달아서 직원 화면에서 한 줄로 묶여 보이고
+    // 한 번에 전달완료 처리할 수 있게 합니다.
+    const batchId = `b_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
     try {
         for (const acc of selected) {
             await db.collection('tablet_loans').add({
@@ -3486,6 +3520,7 @@ async function submitPositionRequests(position) {
                 room: getPositionRoom(position),
                 accessoryType: acc.key,
                 status: 'requested',
+                requestBatchId: batchId,
                 requestedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 patientName: '',
                 checkoutDate: '',
@@ -3505,8 +3540,9 @@ async function submitPositionRequests(position) {
     }
 }
 
-async function submitPositionReturnPhoto(loanDocId, accKey, position) {
-    const preview = document.getElementById(`pos-return-photo-preview-${accKey}`);
+// 사진 한 장을 그 자리에서 지금 대여중인 물품 전체(loanDocIds)에 한꺼번에 반영합니다.
+async function submitPositionReturnPhoto(loanDocIds, position) {
+    const preview = document.getElementById('pos-return-photo-preview');
     const resultEl = document.getElementById('qr-check-result');
 
     if (!preview || preview.classList.contains('hidden')) {
@@ -3515,17 +3551,23 @@ async function submitPositionReturnPhoto(loanDocId, accKey, position) {
     }
 
     try {
-        await db.collection('tablet_loans').doc(loanDocId).update({
-            returnRequested: true,
-            returnPhotoSrc: preview.src,
-            returnRequestedAt: firebase.firestore.FieldValue.serverTimestamp()
+        const batch = db.batch();
+        loanDocIds.forEach(id => {
+            batch.update(db.collection('tablet_loans').doc(id), {
+                returnRequested: true,
+                returnPhotoSrc: preview.src,
+                returnRequestedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
         });
+        await batch.commit();
         // 반납신청 접수 후 화면을 새로고침해서, 같이 표시된 다른 물품 상태도 최신으로 보여줍니다.
         enterPositionQrCheckMode(position);
     } catch (err) {
         console.error(err);
-        resultEl.style.color = '#dc3545';
-        resultEl.textContent = '제출에 실패했습니다. 다시 시도해 주세요.';
+        if (resultEl) {
+            resultEl.style.color = '#dc3545';
+            resultEl.textContent = '제출에 실패했습니다. 다시 시도해 주세요.';
+        }
     }
 }
 
@@ -3536,36 +3578,54 @@ async function submitPositionReturnPhoto(loanDocId, accKey, position) {
 // - 반납은 아래 openReturnConfirmForm/confirmReturn 폼으로, 환자가 남긴 사진(있다면)과 실물을 대조한 뒤 처리합니다.
 // =========================================================
 
-// ---- 직원: 전달완료 처리 (버튼 한 번으로 끝. 환자명/서명 등 별도 입력 없음) ----
-async function deliverPositionItem(loanDocId) {
+// ---- 직원: 전달완료 처리 (한 번에 신청한 물품들을 한 번에 처리. 환자 성함 + 전달 직원 이름 입력) ----
+async function deliverPositionBatch(loanDocIds) {
     const detail = document.getElementById('facility-position-detail');
 
-    let doc;
+    let docs;
     try {
-        doc = await db.collection('tablet_loans').doc(loanDocId).get();
+        docs = await Promise.all(loanDocIds.map(id => db.collection('tablet_loans').doc(id).get()));
     } catch (err) {
         console.error(err);
         alert('처리 중 오류가 발생했습니다: ' + err.message);
         return;
     }
-    if (!doc.exists) { alert('해당 요청을 찾을 수 없습니다.'); return; }
-    const loan = doc.data();
-    const acc = accessoryTypeInfo(loan.accessoryType) || { icon: '🎒', label: '물품' };
+    const validDocs = docs.filter(doc => doc.exists);
+    if (validDocs.length === 0) { alert('해당 요청을 찾을 수 없습니다.'); return; }
+
+    const first = validDocs[0].data();
+    const labelList = validDocs.map(doc => {
+        const acc = accessoryTypeInfo(doc.data().accessoryType) || { icon: '🎒', label: '물품' };
+        return `${acc.icon} ${acc.label}`;
+    }).join(', ');
+
+    if (!confirm(`${first.position || ''} - ${labelList}\n전달완료로 처리하시겠습니까?`)) return;
+
+    // 환자 성함은 전달할 때마다 다르므로 매번 새로 입력받습니다 (기본값 없음).
+    const patientName = (prompt(`${first.position || ''} - ${labelList}\n환자분 성함을 입력해 주세요.`, '') || '').trim();
+    if (!patientName) return;
 
     // 전달하는 직원이 매번 다를 수 있어서, 최근 입력했던 이름을 기본값으로만 채워두고
     // 매번 직접 확인/수정해서 입력하도록 합니다. (이름 입력창에서 취소하면 처리하지 않습니다.)
     const cachedName = localStorage.getItem('inspector_name_cache') || '';
-    const staff = (prompt(`${loan.position || ''} - ${acc.label}\n전달하시는 직원 이름을 입력해 주세요.`, cachedName) || '').trim();
+    const staff = (prompt(`${first.position || ''} - ${labelList}\n전달하시는 직원 이름을 입력해 주세요.`, cachedName) || '').trim();
     if (!staff) return;
     localStorage.setItem('inspector_name_cache', staff);
 
+    const checkoutDate = new Date().toISOString().substring(0, 10);
+
     try {
-        await db.collection('tablet_loans').doc(loanDocId).update({
-            checkoutDate: new Date().toISOString().substring(0, 10),
-            checkoutStaff: staff,
-            status: 'out',
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        const batch = db.batch();
+        validDocs.forEach(doc => {
+            batch.update(doc.ref, {
+                checkoutDate: checkoutDate,
+                checkoutStaff: staff,
+                patientName: patientName,
+                status: 'out',
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
         });
+        await batch.commit();
         if (detail) detail.innerHTML = '';
     } catch (err) {
         console.error(err);
@@ -3686,7 +3746,7 @@ async function openPositionManualEntry() {
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
             showPage('facility-team');
-            deliverPositionItem(ref.id);
+            deliverPositionBatch([ref.id]);
         } catch (err) {
             console.error(err);
             alert('처리 중 오류가 발생했습니다: ' + err.message);
@@ -3698,7 +3758,7 @@ async function openPositionManualEntry() {
     const loan = loanDoc.data();
     showPage('facility-team');
     if (loan.status === 'requested') {
-        deliverPositionItem(loanDoc.id);
+        deliverPositionBatch([loanDoc.id]);
     } else {
         openReturnConfirmForm(loanDoc.id);
     }
@@ -3784,8 +3844,8 @@ async function saveAccessoryCheckout() {
 async function renderTabletHistory() {
     const activeBody = document.getElementById('tablet-history-active-body');
     const completedBody = document.getElementById('tablet-history-completed-body');
-    activeBody.innerHTML = '<tr><td colspan="10">데이터를 불러오는 중입니다...</td></tr>';
-    completedBody.innerHTML = '<tr><td colspan="12">데이터를 불러오는 중입니다...</td></tr>';
+    activeBody.innerHTML = '<tr><td colspan="7">데이터를 불러오는 중입니다...</td></tr>';
+    completedBody.innerHTML = '<tr><td colspan="8">데이터를 불러오는 중입니다...</td></tr>';
 
     const snapshot = await db.collection('tablet_loans').get();
     const docs = [];
@@ -3798,32 +3858,56 @@ async function renderTabletHistory() {
     const totalSlotsEl = document.getElementById('tablet-stat-total');
     if (totalSlotsEl) totalSlotsEl.textContent = `${BED_POSITIONS.length * ACCESSORY_TYPES.length}개 (${BED_POSITIONS.length}자리 × ${ACCESSORY_TYPES.length}종)`;
 
-    // 대여중: 최근 제공일자 순 / 완료: 실제 처리된 시각(updatedAt) 최신순 - 날짜만으로는 같은 날 여러 건일 때 순서가 뒤섞이기 때문입니다.
-    activeDocs.sort((a, b) => (b.checkoutDate || '').localeCompare(a.checkoutDate || ''));
-    completedDocs.sort((a, b) => {
-        const aTime = (a.updatedAt && typeof a.updatedAt.toMillis === 'function') ? a.updatedAt.toMillis() : 0;
-        const bTime = (b.updatedAt && typeof b.updatedAt.toMillis === 'function') ? b.updatedAt.toMillis() : 0;
-        if (aTime !== bTime) return bTime - aTime;
-        return (b.returnDate || '').localeCompare(a.returnDate || '');
-    });
-
     // 새 자리별(position) 기록과 예전 기기번호/부속품-묶음 기록을 한 테이블에서 같이 보여주기 위한 헬퍼들
     const itemCellFor = (d) => {
         if (d.accessoryType) {
             const acc = accessoryTypeInfo(d.accessoryType);
             return acc ? `${acc.icon} ${acc.label}` : d.accessoryType;
         }
-        return d.tabletId ? '📱 태블릿' : '🎧 부속품(구)';
+        // 예전 기기번호/부속품-묶음 기록은 실제로 같이 나간 항목들을 풀어서 보여줍니다.
+        const parts = [];
+        if (d.tabletId) parts.push('📱 태블릿');
+        if (d.standProvided) parts.push('🛏️ 스탠드');
+        if (d.earphoneProvided) parts.push('🎧 이어폰');
+        if (d.chargerProvided) parts.push('🔌 충전기');
+        return parts.length ? parts.join(', ') : '🎒 물품';
     };
     const locationCellFor = (d) => d.position || d.room || '-';
-    const providedCellFor = (d, key) => {
-        // 새 자리별 기록은 항목 하나만 독립적으로 추적하므로 해당 없음('-')으로 표시합니다.
-        if (d.accessoryType) return '-';
-        return d[key] ? 'O' : 'X';
+
+    // 한 번에 같이 신청/제공된 물품들(requestBatchId가 같거나, 같은 자리·같은 제공일자·같은 제공직원)을
+    // 한 줄로 묶어서 보여줍니다. (예전 기기번호/부속품-묶음 기록은 원래대로 한 건씩 표시됩니다.)
+    const groupKeyFor = (d) => {
+        if (d.requestBatchId) return 'b:' + d.requestBatchId;
+        if (d.position) return 'p:' + d.position + '|' + (d.checkoutDate || '') + '|' + (d.checkoutStaff || '');
+        return 'id:' + d._docId;
     };
-    const photoCellFor = (d) => (d.patientReturnPhotoSrc || d.returnPhotoSrc)
-        ? `<button class="nav-btn" style="padding:5px 10px; font-size:12px; margin:0; background:#6c757d;" onclick="viewLoanPhoto('${d._docId}')">📷 사진 보기</button>`
-        : '<span style="color:#adb5bd; font-size:12px;">사진 없음</span>';
+    const groupDocs = (list) => {
+        const map = new Map();
+        list.forEach(d => {
+            const key = groupKeyFor(d);
+            if (!map.has(key)) map.set(key, []);
+            map.get(key).push(d);
+        });
+        return Array.from(map.values());
+    };
+
+    const itemsCellFor = (group) => {
+        const labels = group.map(d => itemCellFor(d));
+        return [...new Set(labels)].join(', ');
+    };
+    const photoCellFor = (group) => {
+        const withPhoto = group.find(d => d.patientReturnPhotoSrc || d.returnPhotoSrc);
+        if (!withPhoto) return '<span style="color:#adb5bd; font-size:12px;">사진 없음</span>';
+        return `<button class="nav-btn" style="padding:5px 10px; font-size:12px; margin:0; background:#6c757d;" onclick="viewLoanPhoto('${withPhoto._docId}')">📷 사진 보기</button>`;
+    };
+    const actionCellFor = (group) => {
+        const first = group[0];
+        if (first.position) {
+            const idsLiteral = group.map(d => `'${d._docId}'`).join(',');
+            return `<button class="nav-btn" style="padding:5px 10px; font-size:12px; margin:0;" onclick="openReturnConfirmFormBatch([${idsLiteral}])">🔁 회수 처리</button>`;
+        }
+        return `<button class="nav-btn" style="padding:5px 10px; font-size:12px; margin:0;" onclick="openReturnFormForLoan('${first._docId}')">🔁 회수 처리</button>`;
+    };
 
     // 회수 처리된 실제 시각까지 보여줍니다. (updatedAt이 없는 옛 기록은 날짜만 표시)
     const formatReturnDateTime = (d) => {
@@ -3833,37 +3917,155 @@ async function renderTabletHistory() {
         return d.returnDate || '-';
     };
 
-    activeBody.innerHTML = activeDocs.length ? activeDocs.map(d => `
-        <tr>
-            <td>${itemCellFor(d)}</td>
-            <td><strong>${locationCellFor(d)}</strong></td>
-            <td>${d.room || getPositionRoom(d.position) || '-'}</td>
-            <td>${d.patientName || '-'}</td>
-            <td>${d.checkoutDate || '-'}</td>
-            <td>${providedCellFor(d, 'standProvided')}</td>
-            <td>${providedCellFor(d, 'earphoneProvided')}</td>
-            <td>${providedCellFor(d, 'chargerProvided')}</td>
-            <td>${d.checkoutStaff || '-'}</td>
-            <td>${photoCellFor(d)}</td>
-        </tr>
-    `).join('') : '<tr><td colspan="10" style="color:#28a745;">🎉 현재 대여중인 항목이 없습니다.</td></tr>';
+    const activeGroups = groupDocs(activeDocs);
+    const completedGroups = groupDocs(completedDocs);
 
-    completedBody.innerHTML = completedDocs.length ? completedDocs.map(d => `
+    // 대여중: 최근 제공일자 순 / 완료: 실제 처리된 시각(updatedAt) 최신순 - 날짜만으로는 같은 날 여러 건일 때 순서가 뒤섞이기 때문입니다.
+    activeGroups.sort((a, b) => (b[0].checkoutDate || '').localeCompare(a[0].checkoutDate || ''));
+    completedGroups.sort((a, b) => {
+        const timeOf = (g) => (g[0].updatedAt && typeof g[0].updatedAt.toMillis === 'function') ? g[0].updatedAt.toMillis() : 0;
+        const aTime = timeOf(a), bTime = timeOf(b);
+        if (aTime !== bTime) return bTime - aTime;
+        return (b[0].returnDate || '').localeCompare(a[0].returnDate || '');
+    });
+
+    activeBody.innerHTML = activeGroups.length ? activeGroups.map(group => {
+        const d = group[0];
+        return `
         <tr>
-            <td>${itemCellFor(d)}</td>
             <td><strong>${locationCellFor(d)}</strong></td>
-            <td>${d.room || getPositionRoom(d.position) || '-'}</td>
+            <td style="text-align:left;">${itemsCellFor(group)}</td>
             <td>${d.patientName || '-'}</td>
             <td>${d.checkoutDate || '-'}</td>
-            <td>${providedCellFor(d, 'standProvided')}</td>
-            <td>${providedCellFor(d, 'earphoneProvided')}</td>
-            <td>${providedCellFor(d, 'chargerProvided')}</td>
+            <td>${d.checkoutStaff || '-'}</td>
+            <td>${photoCellFor(group)}</td>
+            <td>${actionCellFor(group)}</td>
+        </tr>
+    `;
+    }).join('') : '<tr><td colspan="7" style="color:#28a745;">🎉 현재 대여중인 항목이 없습니다.</td></tr>';
+
+    completedBody.innerHTML = completedGroups.length ? completedGroups.map(group => {
+        const d = group[0];
+        return `
+        <tr>
+            <td><strong>${locationCellFor(d)}</strong></td>
+            <td style="text-align:left;">${itemsCellFor(group)}</td>
+            <td>${d.patientName || '-'}</td>
+            <td>${d.checkoutDate || '-'}</td>
             <td>${d.checkoutStaff || '-'}</td>
             <td>${formatReturnDateTime(d)}</td>
             <td>${d.returnStaff || '-'}</td>
-            <td>${photoCellFor(d)}</td>
+            <td>${photoCellFor(group)}</td>
         </tr>
-    `).join('') : '<tr><td colspan="12" style="color:#6c757d;">회수완료된 내역이 없습니다.</td></tr>';
+    `;
+    }).join('') : '<tr><td colspan="8" style="color:#6c757d;">회수완료된 내역이 없습니다.</td></tr>';
+}
+
+// ---- 직원: 대여/회수 현황 조회 목록에서 바로 회수 처리 (한 자리에서 같이 대여한 물품들을 한 번에 처리) ----
+async function openReturnConfirmFormBatch(loanDocIds) {
+    const detail = document.getElementById('tablet-history-detail');
+    if (!detail) return;
+    detail.innerHTML = '<p style="text-align:center; padding:20px; color:#6c757d;">불러오는 중...</p>';
+    detail.scrollIntoView({ behavior: 'smooth' });
+
+    let snaps;
+    try {
+        snaps = await Promise.all(loanDocIds.map(id => db.collection('tablet_loans').doc(id).get()));
+    } catch (err) {
+        console.error(err);
+        detail.innerHTML = `<div class="info-box" style="background:#fff5f5;">불러오기 실패: ${err.message}</div>`;
+        return;
+    }
+    const validDocs = snaps.filter(s => s.exists).map(s => ({ ...s.data(), _docId: s.id }));
+    if (validDocs.length === 0) { detail.innerHTML = '<div class="info-box" style="background:#fff5f5;">해당 대여 기록을 찾을 수 없습니다.</div>'; return; }
+
+    const first = validDocs[0];
+    const itemsLabel = validDocs.map(d => {
+        const acc = accessoryTypeInfo(d.accessoryType);
+        return acc ? `${acc.icon} ${acc.label}` : (d.tabletId ? '📱 태블릿' : '🎧 부속품');
+    }).join(', ');
+
+    const cachedName = localStorage.getItem('inspector_name_cache') || '';
+    const todayStr = new Date().toISOString().substring(0, 10);
+
+    // 환자가 QR로 미리 반납 사진을 제출해둔 경우, 참고용으로 같이 보여줍니다.
+    const submittedPhotos = validDocs.filter(d => d.returnPhotoSrc || d.patientReturnPhotoSrc);
+    const submittedPhotosHtml = submittedPhotos.length
+        ? `<div style="margin-top:12px;"><strong>📷 환자가 제출한 반납 사진</strong><br>
+            ${submittedPhotos.map(d => `<img src="${d.returnPhotoSrc || d.patientReturnPhotoSrc}" class="img-preview" style="max-width:150px; max-height:150px; display:inline-block; margin:6px 6px 0 0; cursor:pointer;" onclick="openImageModal('${d.returnPhotoSrc || d.patientReturnPhotoSrc}')" title="클릭하여 확대">`).join('')}
+           </div>`
+        : `<div style="margin-top:12px; color:#6c757d; font-size:13px;">환자가 제출한 반납 사진은 없습니다.</div>`;
+
+    const idsLiteral = validDocs.map(d => `'${d._docId}'`).join(',');
+
+    detail.innerHTML = `
+        <div class="qr-check-card" style="margin-top:15px;">
+            <h2 style="margin-top:0;">🔁 ${first.position || first.room || ''} 회수 처리</h2>
+            <div class="info-box" style="margin-bottom:15px;">
+                구분: ${itemsLabel}<br>
+                환자명: ${first.patientName || '-'} / 제공일자: ${first.checkoutDate || '-'} / 제공직원: ${first.checkoutStaff || '-'}
+                ${submittedPhotosHtml}
+            </div>
+            <p>실제 물품을 대조 확인하신 후 회수 처리해 주세요. 사진은 한 번만 찍으면 위 물품 전체에 같이 저장됩니다 (선택사항).</p>
+            <div style="margin-top:10px;">
+                <input type="file" id="history-return-photo-input" accept="image/*" capture="environment" style="width:100%;">
+                <img id="history-return-photo-preview" class="img-preview hidden" style="max-width:180px; max-height:180px; margin-top:8px;">
+            </div>
+            <p style="margin-top:10px;">
+                회수일자: <input type="date" id="history-return-date" value="${todayStr}"><br><br>
+                회수직원: <input type="text" id="history-return-staff" placeholder="이름 입력" value="${cachedName}">
+            </p>
+            <button class="save-btn" onclick="confirmReturnBatch([${idsLiteral}])">☁️ 회수 완료 처리</button>
+            <button class="back-btn" style="margin-top:10px;" onclick="document.getElementById('tablet-history-detail').innerHTML=''">취소</button>
+            <div id="history-return-result" style="margin-top:15px; text-align:center; font-weight:bold;"></div>
+        </div>
+    `;
+
+    const photoInput = document.getElementById('history-return-photo-input');
+    if (photoInput) {
+        photoInput.addEventListener('change', function () {
+            compressImageToPreview(this, 'history-return-photo-preview');
+        });
+    }
+}
+
+async function confirmReturnBatch(loanDocIds) {
+    const date = document.getElementById('history-return-date').value;
+    const staff = document.getElementById('history-return-staff').value.trim();
+    const resultEl = document.getElementById('history-return-result');
+    const photoPreview = document.getElementById('history-return-photo-preview');
+
+    if (!date) { alert('회수일자를 확인해 주세요.'); return; }
+    if (!staff) { alert('회수 직원 이름을 입력해 주세요.'); return; }
+
+    localStorage.setItem('inspector_name_cache', staff);
+
+    const hasPhoto = !!(photoPreview && !photoPreview.classList.contains('hidden') && photoPreview.src);
+
+    try {
+        const batch = db.batch();
+        loanDocIds.forEach(id => {
+            const updateData = {
+                returnDate: date,
+                returnStaff: staff,
+                status: 'returned',
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            };
+            if (hasPhoto) updateData.returnPhotoSrc = photoPreview.src;
+            batch.update(db.collection('tablet_loans').doc(id), updateData);
+        });
+        await batch.commit();
+        resultEl.style.color = '#28a745';
+        resultEl.textContent = '✅ 회수 처리되었습니다!';
+        setTimeout(() => {
+            document.getElementById('tablet-history-detail').innerHTML = '';
+            renderTabletHistory();
+        }, 1000);
+    } catch (err) {
+        console.error(err);
+        resultEl.style.color = '#dc3545';
+        resultEl.textContent = '❌ 저장 실패: ' + err.message;
+    }
 }
 
 function switchTabletHistoryView(viewName) {
