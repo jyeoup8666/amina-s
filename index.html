@@ -716,10 +716,6 @@
                 <div class="stat-title">현재 대여중</div>
                 <div class="stat-value" id="tablet-stat-out" style="color:#dc3545;">-</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-title">관리 슬롯 (자리 × 물품종류)</div>
-                <div class="stat-value" id="tablet-stat-total">-</div>
-            </div>
         </div>
 
         <div id="tabletHistoryActiveView">
@@ -3978,8 +3974,6 @@ async function renderTabletHistory() {
     const completedDocs = docs.filter(d => d.status !== 'out');
 
     document.getElementById('tablet-stat-out').textContent = `${activeDocs.length}건`;
-    const totalSlotsEl = document.getElementById('tablet-stat-total');
-    if (totalSlotsEl) totalSlotsEl.textContent = `${BED_POSITIONS.length * ACCESSORY_TYPES.length}개 (${BED_POSITIONS.length}자리 × ${ACCESSORY_TYPES.length}종)`;
 
     // 새 자리별(position) 기록과 예전 기기번호/부속품-묶음 기록을 한 테이블에서 같이 보여주기 위한 헬퍼들
     const itemCellFor = (d) => {
