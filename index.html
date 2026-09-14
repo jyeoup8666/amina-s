@@ -110,6 +110,8 @@
         .mini-item .mini-time { color: #999; font-size: 11px; margin-top: 4px; }
         .mini-item .mini-reply { color: #17a2b8; font-size: 12px; font-weight: bold; margin-top: 3px; }
         .mini-empty { text-align: center; color: #28a745; padding: 30px 10px; font-weight: bold; font-size: 13px; }
+        .mini-group-label { font-weight: bold; font-size: 12px; color: #2b569a; padding-bottom: 3px; margin-top: 6px; border-bottom: 1px solid #dee2e6; }
+        .mini-group-label:first-child { margin-top: 0; }
 
         /* --- 층별 소방시설 이력(관리대장) 스타일 --- */
         .floor-year-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
@@ -329,6 +331,8 @@
                         <tr><td colspan="3" style="color: #6c757d; padding: 20px;">수리 요청 내역을 불러오는 중입니다...</td></tr>
                     </tbody>
                 </table>
+
+                <div id="facility-position-detail"></div>
             </div>
 
             <div id="completedRequestView" class="hidden">
@@ -667,37 +671,11 @@
         <h2>📱 태블릿 대여 관리</h2>
         <p>원하시는 작업을 선택하세요.</p>
         <div class="menu-grid">
-            <div class="menu-btn-sub" onclick="showPage('position-requests')">🔔 자리별 대여요청 현황 (실시간)</div>
             <div class="menu-btn-sub" onclick="showPage('tablet-history')">📊 대여/회수 현황 조회</div>
             <div class="menu-btn-sub" onclick="showPage('tablet-qr')">🏷️ QR코드 라벨 생성/인쇄</div>
             <div class="menu-btn-sub" onclick="showPage('tablet-manual')">✍️ 수동으로 대여/회수 처리</div>
             <div class="menu-btn-sub" onclick="showPage('accessory-manual')">🎧 부속품 단독 대여 등록</div>
         </div>
-    </div>
-
-    <!-- 자리별 대여요청 실시간 현황 (직원용) -->
-    <div id="page-position-requests" class="hidden">
-        <button class="back-btn" onclick="showPage('tablet-menu')">← 이전 메뉴로</button>
-        <h2>🔔 자리별 대여요청 현황</h2>
-        <p style="font-size:13px; color:#6c757d;">환자가 QR을 스캔해서 요청하거나 반납 사진을 제출하면 여기에 실시간으로 표시됩니다. 항목을 눌러 처리하세요.</p>
-
-        <div class="mini-header">
-            <span>📦 배달 대기중</span>
-            <span class="badge-live"><span class="pulse-dot"></span> 실시간</span>
-        </div>
-        <div id="position-request-pending-list" class="mini-status-list" style="margin-bottom:25px;">
-            <div class="mini-empty">불러오는 중...</div>
-        </div>
-
-        <div class="mini-header">
-            <span>📷 반납 확인 대기중</span>
-            <span class="badge-live"><span class="pulse-dot"></span> 실시간</span>
-        </div>
-        <div id="position-return-pending-list" class="mini-status-list">
-            <div class="mini-empty">불러오는 중...</div>
-        </div>
-
-        <div id="position-request-detail"></div>
     </div>
 
     <!-- 태블릿 대여/회수 이력 -->
@@ -1210,6 +1188,16 @@
     // 방 호실 번호 패턴 (예: 405호, 402-2, 306G호 등) - 거의 모든 실제 요청에 호실이 등장합니다.
     const ROOM_NUMBER_PATTERN = /[2-7]\d{2}(-\d{1,2})?\s*(G호|호)?/;
 
+    // 현황판에서 같은 병실 요청끼리 묶어 보여주기 위한 그룹 키(호실 3자리 숫자만, 자리번호 -N은 무시).
+    // 호실을 찾을 수 없으면 null을 반환하고, 이런 항목은 "기타" 그룹으로 모읍니다.
+    function extractRoomGroupKey(text) {
+        if (!text) return null;
+        const m = text.match(ROOM_NUMBER_PATTERN);
+        if (!m) return null;
+        const roomOnly = m[0].match(/[2-7]\d{2}/);
+        return roomOnly ? roomOnly[0] : null;
+    }
+
     // 자모가 낱개로 흩어진 오작동성 텍스트 (예: ㅣㅎㅍ챠9ㄹ4005그후ㅐ9ㅐ)
     function looksLikeGibberish(text) {
         const jamoMatches = text.match(/[\u3131-\u314e\u314f-\u3163]/g);
@@ -1228,25 +1216,23 @@
         return false;
     }
 
-    const requestRef = rtdb.ref('facility_requests');
-    requestRef.on('value', (snapshot) => {
+    // ---- 실시간 시설요청 현황: 라인 시설요청(RTDB) + 자리별 QR 대여요청/반납신청(Firestore)을 한 보드에 합쳐서 보여줍니다. ----
+    // 두 데이터 소스가 각자 실시간으로 갱신되므로, 최신 값을 캐시해뒀다가 어느 쪽이 갱신되든 같은 렌더 함수를 다시 호출합니다.
+    let latestFacilityRtdbData = null;
+    let latestPositionPendingItems = [];      // 자리별 QR - 아직 배달 안 된 요청 (status: requested)
+    let latestPositionReturnPendingItems = []; // 자리별 QR - 반납 사진 제출됨, 확인 대기중 (status: out & returnRequested)
+
+    function renderFacilityBoard() {
         const tbody = document.getElementById('requestTableBody');
         const historyTbody = document.getElementById('completedRequestTableBody');
         const miniList = document.getElementById('mini-status-list');
-        const data = snapshot.val();
+        const data = latestFacilityRtdbData;
 
-        if (!data) {
-            if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="color: #6c757d; padding: 20px;">접수된 수리 요청이 없습니다.</td></tr>';
-            if (historyTbody) {
-                historyTbody.innerHTML = '<tr><td colspan="4" style="color: #6c757d; padding: 20px;">완료된 내역이 없습니다.</td></tr>';
-            }
-            if (miniList) miniList.innerHTML = '<div class="mini-empty">🎉 대기 중인 요청이 없습니다!</div>';
-            return;
-        }
-
-        const entries = Object.entries(data)
-            .map(([key, item]) => ({ key, item }))
-            .filter(({ item }) => isLikelyFacilityRequest(item.text)); // 시설요청이 아닌 메시지는 아예 표시하지 않음
+        const entries = data
+            ? Object.entries(data)
+                .map(([key, item]) => ({ key, item }))
+                .filter(({ item }) => isLikelyFacilityRequest(item.text)) // 시설요청이 아닌 메시지는 아예 표시하지 않음
+            : [];
 
         const activeItems = [];
         const completedItems = [];
@@ -1261,38 +1247,121 @@
             }
         });
 
-        // 진행중 요청: 우선순위 높은 것 먼저, 우선순위가 같으면 최근 접수 순
-        activeItems.sort((a, b) => {
-            const pa = getRequestPriority(a.item.text);
-            const pb = getRequestPriority(b.item.text);
-            if (pa !== pb) return pb - pa;
-            return (b.item.timestamp || 0) - (a.item.timestamp || 0);
-        });
-
         // 완료된 요청: 최근 완료 순
         completedItems.sort((a, b) => (b.item.completedAt || 0) - (a.item.completedAt || 0));
 
-        let activeHtml = '';
-        activeItems.forEach(({ key, item }, i) => {
-            const dateStr = item.timestamp
-                ? new Date(item.timestamp).toLocaleString('ko-KR')
-                : '-';
-            const priority = getRequestPriority(item.text);
-            const rowClass = priority === 2 ? 'priority-row-high' : (priority === 0 ? 'priority-row-low' : '');
-            // 뱃지는 우선(긴급) 항목에만 표시합니다. 후순위는 배경만 옅게 표시하고 뱃지는 넣지 않습니다.
-            const priorityBadge = priority === 2
-                ? '<span class="priority-badge high">🔴 우선</span>'
-                : '';
-            // 완료를 뜻하지 않는 답장(재요청/방문예정 등)은 삭제선 없이 노트로만 붙여서 보여줍니다. 답장이 여러 개면 전부 보여줍니다.
-            const replyNote = renderRepliesHtml(item, '#17a2b8');
+        // ---- 호실별로 묶기: 시설요청 텍스트 + 자리별 대여요청/반납신청을 같은 방 아래에 함께 모읍니다. ----
+        // 그룹 자체의 순서는 "그룹 안에 가장 급한 항목이 있는지 → 가장 최근 시각" 순으로 정해서,
+        // 급한 방이 위로 오면서도 같은 방 항목끼리는 항상 붙어 보이게 합니다. 호실을 못 찾은 항목은 맨 뒤 "기타"로.
+        const roomGroupMap = new Map();
+        const ensureGroup = (roomKey) => {
+            if (!roomGroupMap.has(roomKey)) roomGroupMap.set(roomKey, []);
+            return roomGroupMap.get(roomKey);
+        };
+        activeItems.forEach(entry => {
+            const roomKey = extractRoomGroupKey(entry.item.text) || '기타';
+            ensureGroup(roomKey).push({ kind: 'facility', entry });
+        });
+        latestPositionPendingItems.forEach(d => {
+            const roomKey = getPositionRoom(d.position) || '기타';
+            ensureGroup(roomKey).push({ kind: 'position-request', data: d });
+        });
+        latestPositionReturnPendingItems.forEach(d => {
+            const roomKey = getPositionRoom(d.position) || '기타';
+            ensureGroup(roomKey).push({ kind: 'position-return', data: d });
+        });
 
+        // 배달 대기중인 물품요청은 시설요청의 "우선(긴급)"과 같은 급으로, 반납 확인 대기는 "일반" 급으로 취급합니다.
+        const priorityOf = (row) => {
+            if (row.kind === 'facility') return getRequestPriority(row.entry.item.text);
+            if (row.kind === 'position-request') return 2;
+            return 1;
+        };
+        const timeOf = (row) => {
+            if (row.kind === 'facility') return row.entry.item.timestamp || 0;
+            const ts = row.kind === 'position-request' ? row.data.requestedAt : row.data.returnRequestedAt;
+            return (ts && typeof ts.toMillis === 'function') ? ts.toMillis() : 0;
+        };
+
+        const activeGroups = Array.from(roomGroupMap.entries()).map(([room, rows]) => {
+            rows.sort((a, b) => {
+                const pa = priorityOf(a), pb = priorityOf(b);
+                if (pa !== pb) return pb - pa;
+                return timeOf(b) - timeOf(a);
+            });
+            return {
+                room,
+                rows,
+                maxPriority: Math.max(...rows.map(priorityOf)),
+                latestTs: Math.max(...rows.map(timeOf))
+            };
+        });
+        activeGroups.sort((a, b) => {
+            if (a.room === '기타' && b.room !== '기타') return 1;
+            if (b.room === '기타' && a.room !== '기타') return -1;
+            if (a.maxPriority !== b.maxPriority) return b.maxPriority - a.maxPriority;
+            return b.latestTs - a.latestTs;
+        });
+
+        // ---- 자리별 대여요청/반납신청 행을 만드는 공통 헬퍼 ----
+        const positionRowInfo = (row) => {
+            const d = row.data;
+            const acc = accessoryTypeInfo(d.accessoryType) || { icon: '🎒', label: '물품' };
+            const isRequest = row.kind === 'position-request';
+            const ts = isRequest ? d.requestedAt : d.returnRequestedAt;
+            const dateObj = (ts && typeof ts.toDate === 'function') ? ts.toDate() : null;
+            const onclickFn = isRequest ? `openDeliverForm('${d._docId}')` : `openReturnConfirmForm('${d._docId}')`;
+            const badgeText = isRequest ? '물품요청' : '반납신청';
+            const badgeColor = isRequest ? '#dc3545' : '#17a2b8';
+            const actionLabel = isRequest ? '제공 처리' : '사진 확인 후 회수 처리';
+            const label = `${acc.icon} ${d.position || '-'} · ${acc.label}`;
+            return { dateObj, onclickFn, badgeText, badgeColor, actionLabel, label, isRequest };
+        };
+
+        let activeHtml = '';
+        let activeRowNum = 0;
+        activeGroups.forEach(group => {
+            const roomLabel = group.room === '기타' ? '🏷️ 호실 미확인' : `📍 ${group.room}호`;
             activeHtml += `
-                <tr class="${rowClass}">
-                    <td>${i + 1}</td>
-                    <td>${dateStr}</td>
-                    <td style="text-align: left; font-weight: bold; padding-left: 15px;">${priorityBadge}${item.text || ''}${replyNote}</td>
+                <tr class="room-group-header-row">
+                    <td colspan="3" style="text-align:left; background:#eef2f8; font-weight:bold; padding:6px 10px; color:#2b569a;">${roomLabel} <span style="font-weight:normal; color:#6c757d;">(${group.rows.length}건)</span></td>
                 </tr>
             `;
+            group.rows.forEach(row => {
+                activeRowNum++;
+                if (row.kind === 'facility') {
+                    const item = row.entry.item;
+                    const dateStr = item.timestamp ? new Date(item.timestamp).toLocaleString('ko-KR') : '-';
+                    const priority = getRequestPriority(item.text);
+                    const rowClass = priority === 2 ? 'priority-row-high' : (priority === 0 ? 'priority-row-low' : '');
+                    // 뱃지는 우선(긴급) 항목에만 표시합니다. 후순위는 배경만 옅게 표시하고 뱃지는 넣지 않습니다.
+                    const priorityBadge = priority === 2 ? '<span class="priority-badge high">🔴 우선</span>' : '';
+                    // 완료를 뜻하지 않는 답장(재요청/방문예정 등)은 삭제선 없이 노트로만 붙여서 보여줍니다. 답장이 여러 개면 전부 보여줍니다.
+                    const replyNote = renderRepliesHtml(item, '#17a2b8');
+
+                    activeHtml += `
+                        <tr class="${rowClass}">
+                            <td>${activeRowNum}</td>
+                            <td>${dateStr}</td>
+                            <td style="text-align: left; font-weight: bold; padding-left: 15px;">${priorityBadge}${item.text || ''}${replyNote}</td>
+                        </tr>
+                    `;
+                } else {
+                    const info = positionRowInfo(row);
+                    const dateStr = info.dateObj ? info.dateObj.toLocaleString('ko-KR') : '-';
+                    activeHtml += `
+                        <tr class="${info.isRequest ? 'priority-row-high' : ''}" style="cursor:pointer;" onclick="${info.onclickFn}">
+                            <td>${activeRowNum}</td>
+                            <td>${dateStr}</td>
+                            <td style="text-align: left; font-weight: bold; padding-left: 15px;">
+                                <span style="display:inline-block; background:${info.badgeColor}; color:white; font-size:11px; padding:1px 8px; border-radius:10px; margin-right:6px; font-weight:bold;">${info.badgeText}</span>
+                                ${info.label}
+                                <span style="font-weight:normal; color:#6c757d; font-size:12px;">· 눌러서 ${info.actionLabel}</span>
+                            </td>
+                        </tr>
+                    `;
+                }
+            });
         });
 
         let completedHtml = '';
@@ -1319,36 +1388,60 @@
         });
 
         if (tbody) {
-            tbody.innerHTML = activeHtml || '<tr><td colspan="3" style="color: #28a745; padding: 20px;">🎉 현재 대기 중인 수리 요청이 없습니다!</td></tr>';
+            tbody.innerHTML = activeHtml || '<tr><td colspan="3" style="color: #28a745; padding: 20px;">🎉 현재 대기 중인 요청이 없습니다!</td></tr>';
         }
 
         if (historyTbody) {
             historyTbody.innerHTML = completedHtml || '<tr><td colspan="4" style="color: #6c757d; padding: 20px;">완료된 내역이 없습니다.</td></tr>';
         }
 
-        // 작은 창(팝업) 현황판: 진행중 요청만 우선순위 순서 그대로 간단히 보여줍니다.
+        // 작은 창(팝업) 현황판: 위에서 만든 호실 그룹을 그대로 재사용해서 같은 방식으로 묶어 보여줍니다.
+        // (자리별 요청/반납신청은 정보 확인용으로만 보여주고, 실제 처리는 메인 화면에서 합니다.)
         if (miniList) {
-            if (activeItems.length === 0) {
+            if (activeGroups.length === 0) {
                 miniList.innerHTML = '<div class="mini-empty">🎉 대기 중인 요청이 없습니다!</div>';
             } else {
-                miniList.innerHTML = activeItems.map(({ item }) => {
-                    const priority = getRequestPriority(item.text);
-                    const cls = priority === 2 ? 'high' : '';
-                    const badge = priority === 2 ? '<span class="mini-badge">우선</span>' : '';
-                    const timeStr = item.timestamp
-                        ? new Date(item.timestamp).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                        : '';
-                    const replyNote = getReplyList(item).map(r => `<div class="mini-reply">ㄴ 답장: ${r.message}</div>`).join('');
-                    return `
-                        <div class="mini-item ${cls}">
-                            ${badge}${item.text || ''}
-                            ${replyNote}
-                            <div class="mini-time">${timeStr}</div>
-                        </div>
-                    `;
+                miniList.innerHTML = activeGroups.map(group => {
+                    const roomLabel = group.room === '기타' ? '🏷️ 호실 미확인' : `📍 ${group.room}호`;
+                    const itemsHtml = group.rows.map(row => {
+                        if (row.kind === 'facility') {
+                            const item = row.entry.item;
+                            const priority = getRequestPriority(item.text);
+                            const cls = priority === 2 ? 'high' : '';
+                            const badge = priority === 2 ? '<span class="mini-badge">우선</span>' : '';
+                            const timeStr = item.timestamp
+                                ? new Date(item.timestamp).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                                : '';
+                            const replyNote = getReplyList(item).map(r => `<div class="mini-reply">ㄴ 답장: ${r.message}</div>`).join('');
+                            return `
+                                <div class="mini-item ${cls}">
+                                    ${badge}${item.text || ''}
+                                    ${replyNote}
+                                    <div class="mini-time">${timeStr}</div>
+                                </div>
+                            `;
+                        }
+                        const info = positionRowInfo(row);
+                        const timeStr = info.dateObj
+                            ? info.dateObj.toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                            : '';
+                        return `
+                            <div class="mini-item ${info.isRequest ? 'high' : ''}">
+                                <span class="mini-badge" style="background:${info.badgeColor};">${info.badgeText}</span>${info.label}
+                                <div class="mini-time">${timeStr} · 메인 화면에서 처리</div>
+                            </div>
+                        `;
+                    }).join('');
+                    return `<div class="mini-group-label">${roomLabel} (${group.rows.length}건)</div>${itemsHtml}`;
                 }).join('');
             }
         }
+    }
+
+    const requestRef = rtdb.ref('facility_requests');
+    requestRef.on('value', (snapshot) => {
+        latestFacilityRtdbData = snapshot.val();
+        renderFacilityBoard();
     }, (error) => {
         console.error("실시간 데이터 수신 에러:", error);
         const tbody = document.getElementById('requestTableBody');
@@ -1356,6 +1449,22 @@
         const miniList = document.getElementById('mini-status-list');
         if (miniList) miniList.innerHTML = '<div class="mini-empty" style="color:#dc3545;">데이터를 불러오는 중 오류가 발생했습니다.</div>';
     });
+
+    // 자리별 QR 대여요청/반납신청 (Firestore) - 직원으로 로그인된 상태에서만 읽히며, 값이 갱신될 때마다 같은 보드를 다시 그립니다.
+    db.collection('tablet_loans')
+        .where('status', 'in', ['requested', 'out'])
+        .onSnapshot((snapshot) => {
+            latestPositionPendingItems = [];
+            latestPositionReturnPendingItems = [];
+            snapshot.forEach(doc => {
+                const d = { ...doc.data(), _docId: doc.id };
+                if (d.status === 'requested') latestPositionPendingItems.push(d);
+                else if (d.status === 'out' && d.returnRequested) latestPositionReturnPendingItems.push(d);
+            });
+            renderFacilityBoard();
+        }, (error) => {
+            console.error('자리별 대여요청 실시간 수신 에러:', error);
+        });
 
     // 실시간 현황을 화면 오른쪽 아래에 작은 별도 창으로 띄웁니다.
     // (브라우저가 만드는 별도 창이라 위치/크기는 지정할 수 있지만, 다른 모든 프로그램 위에
@@ -1533,7 +1642,6 @@
         if(pageId === 'fire-form') initFireTable();
         if(pageId === 'fire-history') initFireHistoryFloorView();
         if(pageId === 'fire-qr') { renderQrPrintFloorButtons(); renderQrPrintGrid('ALL'); }
-        if(pageId === 'position-requests') startPositionRequestBoard();
         if(pageId === 'tablet-history') renderTabletHistory();
         if(pageId === 'tablet-qr') { renderPositionQrFloorButtons(); renderPositionQrTypeButtons(); renderPositionQrGrid(); renderAccessoryRegisterQr(); renderAccessoryReturnPhotoQr(); renderAccessoryReturnProcessQr(); }
         if(pageId === 'tablet-manual') renderPositionManualSelect();
@@ -3274,7 +3382,17 @@ function renderPositionQrGrid() {
         ? ACCESSORY_TYPES
         : ACCESSORY_TYPES.filter(a => a.key === positionQrFilterAcc);
 
+    // 병실이 바뀔 때마다 구분용 제목을 넣어서, 라벨을 인쇄해서 자를 때 어느 방인지 한눈에 보이게 합니다.
+    let lastRoom = null;
     targetPositions.forEach(pos => {
+        const room = getPositionRoom(pos);
+        if (room !== lastRoom) {
+            const header = document.createElement('div');
+            header.className = 'qr-print-room-header';
+            header.textContent = `📍 ${room}호`;
+            container.appendChild(header);
+            lastRoom = room;
+        }
         targetAccTypes.forEach(acc => {
             const url = `${base}?t=position&pos=${encodeURIComponent(pos)}&acc=${acc.key}`;
             appendQrCard(container, url, `${acc.icon} ${pos}<br><span style="font-weight:normal;">${acc.label}</span>`);
@@ -3429,88 +3547,14 @@ async function submitPositionReturnPhoto(loanDocId) {
 }
 
 // =========================================================
-// 10-2. 직원용: 자리별 대여요청 현황 (실시간)
-// - 시설요청현황판과 같은 방식(실시간 리스트)으로, 환자가 올린 요청/반납신청을 직원이 여기서 확인하고 처리합니다.
+// 10-2. 직원용: 자리별 대여요청 처리 화면
+// - 자리별 대여요청/반납신청 목록 자체는 renderFacilityBoard()에서 실시간 시설요청 현황과 함께 그룹으로 표시됩니다.
+// - 아래는 그 목록에서 항목을 클릭했을 때 뜨는 처리(제공/회수) 화면입니다.
 // =========================================================
-
-let positionRequestListenerStarted = false;
-
-function startPositionRequestBoard() {
-    if (positionRequestListenerStarted) return;
-    positionRequestListenerStarted = true;
-
-    db.collection('tablet_loans')
-        .where('status', 'in', ['requested', 'out'])
-        .onSnapshot((snapshot) => {
-            const pendingList = [];
-            const returnPendingList = [];
-            snapshot.forEach(doc => {
-                const d = { ...doc.data(), _docId: doc.id };
-                if (d.status === 'requested') pendingList.push(d);
-                else if (d.status === 'out' && d.returnRequested) returnPendingList.push(d);
-            });
-
-            pendingList.sort((a, b) => {
-                const at = (a.requestedAt && a.requestedAt.toMillis) ? a.requestedAt.toMillis() : 0;
-                const bt = (b.requestedAt && b.requestedAt.toMillis) ? b.requestedAt.toMillis() : 0;
-                return at - bt; // 먼저 요청한 순
-            });
-            returnPendingList.sort((a, b) => {
-                const at = (a.returnRequestedAt && a.returnRequestedAt.toMillis) ? a.returnRequestedAt.toMillis() : 0;
-                const bt = (b.returnRequestedAt && b.returnRequestedAt.toMillis) ? b.returnRequestedAt.toMillis() : 0;
-                return at - bt;
-            });
-
-            renderPositionRequestList(pendingList);
-            renderPositionReturnPendingList(returnPendingList);
-        }, (error) => {
-            console.error('자리별 대여요청 실시간 수신 에러:', error);
-            const el = document.getElementById('position-request-pending-list');
-            if (el) el.innerHTML = '<div class="mini-empty" style="color:#dc3545;">데이터를 불러오는 중 오류가 발생했습니다.</div>';
-        });
-}
-
-function renderPositionRequestList(items) {
-    const el = document.getElementById('position-request-pending-list');
-    if (!el) return;
-    if (items.length === 0) {
-        el.innerHTML = '<div class="mini-empty">🎉 대기 중인 요청이 없습니다!</div>';
-        return;
-    }
-    el.innerHTML = items.map(d => {
-        const acc = accessoryTypeInfo(d.accessoryType) || { icon: '🎒', label: '물품' };
-        const timeStr = (d.requestedAt && d.requestedAt.toDate) ? d.requestedAt.toDate().toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-        return `
-            <div class="mini-item high" style="cursor:pointer;" onclick="openDeliverForm('${d._docId}')">
-                <span class="mini-badge">요청</span>${d.position || '-'} · ${acc.icon} ${acc.label}
-                <div class="mini-time">${timeStr} · 눌러서 제공 처리</div>
-            </div>
-        `;
-    }).join('');
-}
-
-function renderPositionReturnPendingList(items) {
-    const el = document.getElementById('position-return-pending-list');
-    if (!el) return;
-    if (items.length === 0) {
-        el.innerHTML = '<div class="mini-empty">🎉 확인 대기 중인 반납이 없습니다!</div>';
-        return;
-    }
-    el.innerHTML = items.map(d => {
-        const acc = accessoryTypeInfo(d.accessoryType) || { icon: '🎒', label: '물품' };
-        const timeStr = (d.returnRequestedAt && d.returnRequestedAt.toDate) ? d.returnRequestedAt.toDate().toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-        return `
-            <div class="mini-item" style="cursor:pointer;" onclick="openReturnConfirmForm('${d._docId}')">
-                <span class="mini-badge" style="background:#17a2b8;">반납신청</span>${d.position || '-'} · ${acc.icon} ${acc.label}
-                <div class="mini-time">${timeStr} · 눌러서 사진 확인 후 회수 처리</div>
-            </div>
-        `;
-    }).join('');
-}
 
 // ---- 직원: 제공 처리 화면 (환자명·서명을 여기서 직원이 직접 입력/수령) ----
 async function openDeliverForm(loanDocId) {
-    const detail = document.getElementById('position-request-detail');
+    const detail = document.getElementById('facility-position-detail');
     if (!detail) return;
     detail.innerHTML = '<p style="text-align:center; padding:20px; color:#6c757d;">불러오는 중...</p>';
 
@@ -3533,7 +3577,7 @@ async function openDeliverForm(loanDocId) {
             </p>
             <div id="deliver-terms-container"></div>
             <button class="save-btn" onclick="confirmDelivery('${loanDocId}')">☁️ 제공 완료 처리</button>
-            <button class="back-btn" style="margin-top:10px;" onclick="document.getElementById('position-request-detail').innerHTML=''">취소</button>
+            <button class="back-btn" style="margin-top:10px;" onclick="document.getElementById('facility-position-detail').innerHTML=''">취소</button>
             <div id="deliver-result" style="margin-top:15px; text-align:center; font-weight:bold;"></div>
         </div>
     `;
@@ -3575,7 +3619,7 @@ async function confirmDelivery(loanDocId) {
         });
         resultEl.style.color = '#28a745';
         resultEl.textContent = '✅ 제공 처리되었습니다!';
-        setTimeout(() => { document.getElementById('position-request-detail').innerHTML = ''; }, 1200);
+        setTimeout(() => { document.getElementById('facility-position-detail').innerHTML = ''; }, 1200);
     } catch (err) {
         console.error(err);
         resultEl.style.color = '#dc3545';
@@ -3585,7 +3629,7 @@ async function confirmDelivery(loanDocId) {
 
 // ---- 직원: 반납 확인/회수 처리 화면 (환자가 제출한 사진과 대조 후 처리) ----
 async function openReturnConfirmForm(loanDocId) {
-    const detail = document.getElementById('position-request-detail');
+    const detail = document.getElementById('facility-position-detail');
     if (!detail) return;
     detail.innerHTML = '<p style="text-align:center; padding:20px; color:#6c757d;">불러오는 중...</p>';
 
@@ -3614,7 +3658,7 @@ async function openReturnConfirmForm(loanDocId) {
                 회수직원: <input type="text" id="return-confirm-staff" placeholder="이름 입력" value="${cachedName}">
             </p>
             <button class="save-btn" onclick="confirmReturn('${loanDocId}')">☁️ 회수 완료 처리</button>
-            <button class="back-btn" style="margin-top:10px;" onclick="document.getElementById('position-request-detail').innerHTML=''">취소</button>
+            <button class="back-btn" style="margin-top:10px;" onclick="document.getElementById('facility-position-detail').innerHTML=''">취소</button>
             <div id="return-confirm-result" style="margin-top:15px; text-align:center; font-weight:bold;"></div>
         </div>
     `;
@@ -3640,7 +3684,7 @@ async function confirmReturn(loanDocId) {
         });
         resultEl.style.color = '#28a745';
         resultEl.textContent = '✅ 회수 처리되었습니다!';
-        setTimeout(() => { document.getElementById('position-request-detail').innerHTML = ''; }, 1200);
+        setTimeout(() => { document.getElementById('facility-position-detail').innerHTML = ''; }, 1200);
     } catch (err) {
         console.error(err);
         resultEl.style.color = '#dc3545';
@@ -3695,7 +3739,7 @@ async function openPositionManualEntry() {
                 returnRequested: false,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
-            showPage('position-requests');
+            showPage('facility-team');
             openDeliverForm(ref.id);
         } catch (err) {
             console.error(err);
@@ -3706,7 +3750,7 @@ async function openPositionManualEntry() {
 
     const loanDoc = snapshot.docs[0];
     const loan = loanDoc.data();
-    showPage('position-requests');
+    showPage('facility-team');
     if (loan.status === 'requested') {
         openDeliverForm(loanDoc.id);
     } else {
