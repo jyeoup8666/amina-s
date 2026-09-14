@@ -12,7 +12,7 @@
 //     그 방 메시지는 전실 처리 로직으로, 나머지 방은 기존 시설요청 로직으로 갑니다.
 // ─────────────────────────────────────────────────────────────
 
-const NURSING_GROUP_ID = ''; // 예: 'C1234567890abcdef1234567890abcd' - 확인되면 채워넣기
+const NURSING_GROUP_ID = 'C7301eb7ce6143bfaa4b4f50d57792f95'; // 예: 'C1234567890abcdef1234567890abcd' - 확인되면 채워넣기
 
 const firebaseUrl = 'https://facility-check-74a17-default-rtdb.firebaseio.com/facility_requests';
 const transferFirebaseUrl = 'https://facility-check-74a17-default-rtdb.firebaseio.com/patient_transfers';
