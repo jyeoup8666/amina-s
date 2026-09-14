@@ -90,6 +90,8 @@
         /* --- 실시간 시설요청 우선순위 표시 --- */
         tr.priority-row-high { background-color: #fff5f5; box-shadow: inset 4px 0 0 #dc3545; }
         tr.priority-row-low { background-color: #f8f9fa; box-shadow: inset 4px 0 0 #adb5bd; }
+        /* 물품요청(대여)은 긴급 시설요청이 아니므로 눈에 덜 띄는 초록색으로 구분만 해둡니다. */
+        tr.priority-row-item-request { background-color: #f4fbf6; box-shadow: inset 4px 0 0 #28a745; }
         .priority-badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: bold; margin-right: 6px; white-space: nowrap; vertical-align: middle; }
         .priority-badge.high { background: #dc3545; color: white; }
         .priority-badge.low { background: #adb5bd; color: white; }
@@ -106,6 +108,7 @@
         .mini-status-list { display: flex; flex-direction: column; gap: 8px; }
         .mini-item { padding: 8px 10px; border-radius: 6px; font-size: 13px; line-height: 1.45; border-left: 4px solid #ced4da; background: #f8f9fa; }
         .mini-item.high { border-left-color: #dc3545; background: #fff5f5; }
+        .mini-item.item-request { border-left-color: #28a745; background: #f4fbf6; }
         .mini-item .mini-badge { display: inline-block; background: #dc3545; color: white; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-right: 5px; font-weight: bold; }
         .mini-item .mini-time { color: #999; font-size: 11px; margin-top: 4px; }
         .mini-item .mini-reply { color: #17a2b8; font-size: 12px; font-weight: bold; margin-top: 3px; }
@@ -1266,11 +1269,10 @@
             allActiveRows.push({ kind: 'position-return-batch', items });
         });
 
-        // 배달 대기중인 물품요청은 시설요청의 "우선(긴급)"과 같은 급으로, 반납 확인 대기는 "일반" 급으로 취급합니다.
+        // 물품요청/반납신청은 긴급 시설요청이 아니므로 후순위(낮음)로 취급해서 목록 아래쪽에 뜨게 합니다.
         const priorityOf = (row) => {
             if (row.kind === 'facility') return getRequestPriority(row.entry.item.text);
-            if (row.kind === 'position-request-batch') return 2;
-            return 1;
+            return 0;
         };
         const maxTimeOf = (items, field) => items.reduce((max, d) => {
             const ts = d[field];
@@ -1309,7 +1311,7 @@
             if (row.kind === 'position-request-batch') {
                 const dateObj = latestDateOf(items, 'requestedAt');
                 const onclickFn = `deliverPositionBatch([${idsLiteral}])`;
-                return { dateObj, onclickFn, badgeText: '물품요청', badgeColor: '#dc3545', actionLabel: '전달완료 처리하기', label, isRequest: true };
+                return { dateObj, onclickFn, badgeText: '물품요청', badgeColor: '#28a745', actionLabel: '전달완료 처리하기', label, isRequest: true };
             }
             const dateObj = latestDateOf(items, 'returnRequestedAt');
             const onclickFn = `openReturnConfirmForm([${idsLiteral}])`;
@@ -1341,7 +1343,7 @@
                 const info = positionRowInfo(row);
                 const dateStr = info.dateObj ? info.dateObj.toLocaleString('ko-KR') : '-';
                 activeHtml += `
-                    <tr class="${info.isRequest ? 'priority-row-high' : ''}" style="cursor:pointer;" onclick="${info.onclickFn}">
+                    <tr class="${info.isRequest ? 'priority-row-item-request' : ''}" style="cursor:pointer;" onclick="${info.onclickFn}">
                         <td>${activeRowNum}</td>
                         <td>${dateStr}</td>
                         <td style="text-align: left; font-weight: bold; padding-left: 15px;">
@@ -1414,7 +1416,7 @@
                         ? info.dateObj.toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
                         : '';
                     return `
-                        <div class="mini-item ${info.isRequest ? 'high' : ''}">
+                        <div class="mini-item ${info.isRequest ? 'item-request' : ''}">
                             <span class="mini-badge" style="background:${info.badgeColor};">${info.badgeText}</span>${info.label}
                             <div class="mini-time">${timeStr} · 메인 화면에서 처리</div>
                         </div>
