@@ -764,7 +764,7 @@
         <h2 class="no-print">🏷️ 자리별 QR코드 라벨 생성 / 인쇄</h2>
         <p class="no-print">
             병실 자리(예: 301-2)마다 QR이 <strong>딱 하나씩</strong>만 나옵니다. <strong>환자분이 직접</strong> 스캔해서 쓰는 QR로,
-            로그인이나 이름 입력 없이 태블릿·충전기·이어폰·스탠드 중 필요한 물품을 O/X로 고른 뒤 요청하면 됩니다.
+            로그인이나 이름 입력 없이 태블릿·충전기·이어폰·스탠드·멀티탭 중 필요한 물품을 O/X로 고른 뒤 요청하면 됩니다.
             요청이 들어오면 직원 화면의 "실시간 시설요청 현황"에 실시간으로 뜨고, 직원이 물품을 가져다준 뒤 그 화면에서
             "전달완료" 버튼 한 번만 누르면 끝입니다. 반납할 때는 환자가 같은 QR을 다시 스캔해 사진을 남길 수 있는데,
             이건 선택사항이라 안 남기셔도 되고(이용약관에 분실 시 배상 규정이 있습니다), 직원은 물품을 돌려받으면
@@ -1163,10 +1163,18 @@
     // 것으로 보고 현황판에서 제외합니다.
 
     // 시설요청이 아닌 것으로 확실한 패턴 (이송/운행 안내, 테스트 메시지, 라인 메시지 취소 알림 등)
+    // + 입퇴원/전실 안내처럼 간호팀 쪽 메시지가 혹시라도 이 방에 잘못 들어오더라도(예: 웹훅 설정 오류,
+    //   직원이 실수로 다른 방에 올린 경우 등) 방번호가 들어있다는 이유만으로 시설요청으로 오인되지 않도록
+    //   여기서 한 번 더 걸러냅니다.
     const NOISE_PATTERNS = [
         '출발입니다', '출차완료', '출차 완료', '외출추가', '외출 추가', '재환입원',
         '[테스트]', '테스트입니다', '테스트 입니다', '[완료]',
-        '메시지를 보내기 취소했습니다', '보내기 취소', '메시지를 삭제했습니다', '이 메시지를 삭제했습니다'
+        '메시지를 보내기 취소했습니다', '보내기 취소', '메시지를 삭제했습니다', '이 메시지를 삭제했습니다',
+        '입원등록완료', '입원등록', '퇴원하셨습니다', '퇴원하십니다', '퇴원합니다', '퇴원하였습니다',
+        '전실하셨습니다', '전실 하셨습니다', '전실하였습니다', '전실 하였습니다',
+        '전실합니다', '전실 합니다', '전실하십니다', '전실 하십니다', '전실 변경',
+        '전산이동', '전산 이동', '차트이동', '차트 이동', '차트정리', '차트 정리',
+        '밴드키', '체온정상'
     ];
 
     // "보관짐 ...드렸습니다/드렸어요" 처럼 이미 끝난 짐 보관 처리를 그냥 알리기만 하는 메시지는
@@ -2777,7 +2785,7 @@ function initQrCheckFromUrl() {
     } else if (type === 'boiler') {
         enterBoilerQrCheckMode(params.get('room'));
     } else if (type === 'position') {
-        // 환자용: 자리 QR 하나로 태블릿/충전기/이어폰/스탠드 요청, 그리고 나중에 반납 사진(선택)까지 처리
+        // 환자용: 자리 QR 하나로 태블릿/충전기/이어폰/스탠드/멀티탭 요청, 그리고 나중에 반납 사진(선택)까지 처리
         enterPositionQrCheckMode(params.get('pos'));
     } else if (type === 'tablet') {
         // 예전 방식(기기번호) QR - 이미 인쇄되어 붙어있는 라벨과의 호환을 위해 남겨둡니다.
@@ -3073,14 +3081,14 @@ async function saveBoilerQrCheck(room) {
 const TABLET_IDS = Array.from({ length: 80 }, (_, i) => String(i + 1).padStart(2, '0'));
 
 // 분실/파손 배상 금액 (예시로 임의 설정한 금액입니다. 실제 금액이 정해지면 이 부분만 바꾸면 됩니다.)
-const DAMAGE_FEES = { tablet: 200000, charger: 15000, stand: 10000, earphone: 5000 };
+const DAMAGE_FEES = { tablet: 200000, charger: 15000, stand: 10000, earphone: 5000, multitap: 15000 };
 
 let tabletCheckoutState = { stand: true, earphone: true, charger: true };
 
 // =========================================================
 // 10-1. 자리(병상 위치)별 QR 대여 시스템
 // - 병실 배치도 기준 정원(인원수)에 맞춰 "301-1, 301-2, 301-3..." 식의 자리번호를 만들고,
-//   자리마다 태블릿/충전기/이어폰/스탠드 4종 QR을 각각 독립적으로 대여/반납 추적합니다.
+//   자리마다 태블릿/충전기/이어폰/스탠드/멀티탭 5종을 각각 독립적으로 대여/반납 추적합니다.
 // - 실제 병실 정원이 바뀌면 아래 ROOM_CAPACITY 표만 수정하면 전체 시스템에 반영됩니다.
 // =========================================================
 
@@ -3100,7 +3108,8 @@ const ACCESSORY_TYPES = [
     { key: 'tablet', label: '태블릿', icon: '📱' },
     { key: 'charger', label: '충전기', icon: '🔌' },
     { key: 'earphone', label: '이어폰', icon: '🎧' },
-    { key: 'stand', label: '스탠드', icon: '🛏️' }
+    { key: 'stand', label: '스탠드', icon: '🛏️' },
+    { key: 'multitap', label: '멀티탭', icon: '⚡' }
 ];
 
 function accessoryTypeInfo(key) {
@@ -3122,7 +3131,7 @@ function getTermsHtml() {
         <div class="info-box terms-box">
             <strong>📄 태블릿 등 물품 대여 이용약관</strong>
             <ol>
-                <li>대여 물품: 태블릿, 충전기, 스탠드, 이어폰 (제공된 항목에 한함)</li>
+                <li>대여 물품: 태블릿, 충전기, 스탠드, 이어폰, 멀티탭 (제공된 항목에 한함)</li>
                 <li>대여 기간: 입원 기간 중이며, 퇴원 또는 사용 종료 시 반납합니다.</li>
                 <li>물품은 정상적인 용도로만 사용하며, 임의로 분해·개조하지 않습니다.</li>
                 <li>분실 또는 파손(고의·과실 포함) 시 아래 금액을 배상합니다. (통상적인 사용에 따른 자연 마모·고장은 배상 대상에서 제외됩니다.)
@@ -3131,6 +3140,7 @@ function getTermsHtml() {
                         <li>충전기: ${DAMAGE_FEES.charger.toLocaleString('ko-KR')}원</li>
                         <li>스탠드: ${DAMAGE_FEES.stand.toLocaleString('ko-KR')}원</li>
                         <li>이어폰: ${DAMAGE_FEES.earphone.toLocaleString('ko-KR')}원</li>
+                        <li>멀티탭: ${DAMAGE_FEES.multitap.toLocaleString('ko-KR')}원</li>
                     </ul>
                 </li>
                 <li>반납 시 대여 물품 일체(부속품 포함)를 함께 반납해야 합니다.</li>
@@ -3327,12 +3337,12 @@ function renderPositionQrGrid() {
             lastRoom = room;
         }
         const url = `${base}?t=position&pos=${encodeURIComponent(pos)}`;
-        appendQrCard(container, url, `🛏️ ${pos}<br><span style="font-weight:normal;">태블릿·충전기·이어폰·스탠드</span>`);
+        appendQrCard(container, url, `🛏️ ${pos}<br><span style="font-weight:normal;">태블릿·충전기·이어폰·스탠드·멀티탭</span>`);
     });
 }
 
 // ---- 자리별 QR 스캔 시 진입하는 화면 (환자 본인이 직접, 로그인 없이 사용) ----
-// 자리(예: 301-1)마다 QR이 딱 하나씩만 있고, 그 안에서 태블릿/충전기/이어폰/스탠드를
+// 자리(예: 301-1)마다 QR이 딱 하나씩만 있고, 그 안에서 태블릿/충전기/이어폰/스탠드/멀티탭을
 // 각각 O(필요)/X(필요없음)로 고른 뒤 한 번에 요청합니다. 환자가 QR로 하는 일은 딱 두 가지,
 // "요청하기"와(물품을 받은 뒤 돌려줄 때) "반납 사진 남기기"(선택사항)뿐입니다.
 // 물품 전달과 회수 처리는 전부 직원이 컴퓨터의 "실시간 시설요청 현황" 화면에서 처리합니다.
@@ -3786,7 +3796,7 @@ async function renderTabletHistory() {
 
     document.getElementById('tablet-stat-out').textContent = `${activeDocs.length}건`;
     const totalSlotsEl = document.getElementById('tablet-stat-total');
-    if (totalSlotsEl) totalSlotsEl.textContent = `${BED_POSITIONS.length * ACCESSORY_TYPES.length}개 (${BED_POSITIONS.length}자리 × 4종)`;
+    if (totalSlotsEl) totalSlotsEl.textContent = `${BED_POSITIONS.length * ACCESSORY_TYPES.length}개 (${BED_POSITIONS.length}자리 × ${ACCESSORY_TYPES.length}종)`;
 
     // 대여중: 최근 제공일자 순 / 완료: 실제 처리된 시각(updatedAt) 최신순 - 날짜만으로는 같은 날 여러 건일 때 순서가 뒤섞이기 때문입니다.
     activeDocs.sort((a, b) => (b.checkoutDate || '').localeCompare(a.checkoutDate || ''));
