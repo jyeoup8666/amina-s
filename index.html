@@ -1249,19 +1249,21 @@
         activeItems.forEach(entry => {
             allActiveRows.push({ kind: 'facility', entry });
         });
-        // 같은 자리에서 한 번에 여러 물품을 신청한 경우(requestBatchId가 같음) 한 줄로 묶어서 보여줍니다.
-        // (예전에 만들어졌거나 직원이 수동으로 하나씩 등록한 건은 batchId가 없으므로 문서ID를 그대로 묶음키로 씁니다.)
-        const batchMap = new Map();
-        latestPositionPendingItems.forEach(d => {
-            const key = d.requestBatchId || d._docId;
-            if (!batchMap.has(key)) batchMap.set(key, []);
-            batchMap.get(key).push(d);
-        });
-        batchMap.forEach(items => {
+        // 같은 자리는 언제 신청했든/몇 번에 나눠 신청했든 한 줄로 묶어서 보여줍니다 (요청/반납신청 각각 따로).
+        const groupByPosition = (list) => {
+            const map = new Map();
+            list.forEach(d => {
+                const key = d.position || d._docId;
+                if (!map.has(key)) map.set(key, []);
+                map.get(key).push(d);
+            });
+            return Array.from(map.values());
+        };
+        groupByPosition(latestPositionPendingItems).forEach(items => {
             allActiveRows.push({ kind: 'position-request-batch', items });
         });
-        latestPositionReturnPendingItems.forEach(d => {
-            allActiveRows.push({ kind: 'position-return', data: d });
+        groupByPosition(latestPositionReturnPendingItems).forEach(items => {
+            allActiveRows.push({ kind: 'position-return-batch', items });
         });
 
         // 배달 대기중인 물품요청은 시설요청의 "우선(긴급)"과 같은 급으로, 반납 확인 대기는 "일반" 급으로 취급합니다.
@@ -1270,16 +1272,15 @@
             if (row.kind === 'position-request-batch') return 2;
             return 1;
         };
+        const maxTimeOf = (items, field) => items.reduce((max, d) => {
+            const ts = d[field];
+            const t = (ts && typeof ts.toMillis === 'function') ? ts.toMillis() : 0;
+            return Math.max(max, t);
+        }, 0);
         const timeOf = (row) => {
             if (row.kind === 'facility') return row.entry.item.timestamp || 0;
-            if (row.kind === 'position-request-batch') {
-                return row.items.reduce((max, d) => {
-                    const t = (d.requestedAt && typeof d.requestedAt.toMillis === 'function') ? d.requestedAt.toMillis() : 0;
-                    return Math.max(max, t);
-                }, 0);
-            }
-            const ts = row.data.returnRequestedAt;
-            return (ts && typeof ts.toMillis === 'function') ? ts.toMillis() : 0;
+            if (row.kind === 'position-request-batch') return maxTimeOf(row.items, 'requestedAt');
+            return maxTimeOf(row.items, 'returnRequestedAt');
         };
 
         allActiveRows.sort((a, b) => {
@@ -1288,32 +1289,30 @@
             return timeOf(b) - timeOf(a);
         });
 
-        // ---- 자리별 대여요청(묶음)/반납신청 행을 만드는 공통 헬퍼 ----
+        // ---- 자리별 대여요청/반납신청 행(같은 자리끼리 묶음)을 만드는 공통 헬퍼 ----
+        const latestDateOf = (items, field) => items.reduce((latest, d) => {
+            const ts = d[field];
+            const dt = (ts && typeof ts.toDate === 'function') ? ts.toDate() : null;
+            if (!dt) return latest;
+            if (!latest || dt > latest) return dt;
+            return latest;
+        }, null);
+        const itemLabelsOf = (items) => items.map(d => {
+            const acc = accessoryTypeInfo(d.accessoryType) || { icon: '🎒', label: '물품' };
+            return `${acc.icon} ${acc.label}`;
+        }).join(', ');
         const positionRowInfo = (row) => {
+            const items = row.items;
+            const first = items[0];
+            const idsLiteral = items.map(d => `'${d._docId}'`).join(',');
+            const label = `${first.position || '-'} · ${itemLabelsOf(items)}`;
             if (row.kind === 'position-request-batch') {
-                const items = row.items;
-                const first = items[0];
-                const labelParts = items.map(d => {
-                    const acc = accessoryTypeInfo(d.accessoryType) || { icon: '🎒', label: '물품' };
-                    return `${acc.icon} ${acc.label}`;
-                });
-                const dateObj = items.reduce((latest, d) => {
-                    const dt = (d.requestedAt && typeof d.requestedAt.toDate === 'function') ? d.requestedAt.toDate() : null;
-                    if (!dt) return latest;
-                    if (!latest || dt > latest) return dt;
-                    return latest;
-                }, null);
-                const idsLiteral = items.map(d => `'${d._docId}'`).join(',');
+                const dateObj = latestDateOf(items, 'requestedAt');
                 const onclickFn = `deliverPositionBatch([${idsLiteral}])`;
-                const label = `${first.position || '-'} · ${labelParts.join(', ')}`;
                 return { dateObj, onclickFn, badgeText: '물품요청', badgeColor: '#dc3545', actionLabel: '전달완료 처리하기', label, isRequest: true };
             }
-            const d = row.data;
-            const acc = accessoryTypeInfo(d.accessoryType) || { icon: '🎒', label: '물품' };
-            const ts = d.returnRequestedAt;
-            const dateObj = (ts && typeof ts.toDate === 'function') ? ts.toDate() : null;
-            const onclickFn = `openReturnConfirmForm('${d._docId}')`;
-            const label = `${acc.icon} ${d.position || '-'} · ${acc.label}`;
+            const dateObj = latestDateOf(items, 'returnRequestedAt');
+            const onclickFn = `openReturnConfirmForm([${idsLiteral}])`;
             return { dateObj, onclickFn, badgeText: '반납신청', badgeColor: '#17a2b8', actionLabel: '사진 확인 후 회수 처리', label, isRequest: false };
         };
 
@@ -3578,46 +3577,66 @@ async function submitPositionReturnPhoto(loanDocIds, position) {
 // - 반납은 아래 openReturnConfirmForm/confirmReturn 폼으로, 환자가 남긴 사진(있다면)과 실물을 대조한 뒤 처리합니다.
 // =========================================================
 
-// ---- 직원: 전달완료 처리 (한 번에 신청한 물품들을 한 번에 처리. 환자 성함 + 전달 직원 이름 입력) ----
+// ---- 직원: 전달완료 처리 (한 번에 신청한 물품들을 한 번에 처리. 환자 성함 + 전달 직원 이름을 화면에 직접 입력) ----
 async function deliverPositionBatch(loanDocIds) {
     const detail = document.getElementById('facility-position-detail');
+    if (!detail) return;
+    detail.innerHTML = '<p style="text-align:center; padding:20px; color:#6c757d;">불러오는 중...</p>';
+    detail.scrollIntoView({ behavior: 'smooth' });
 
     let docs;
     try {
         docs = await Promise.all(loanDocIds.map(id => db.collection('tablet_loans').doc(id).get()));
     } catch (err) {
         console.error(err);
-        alert('처리 중 오류가 발생했습니다: ' + err.message);
+        detail.innerHTML = `<div class="info-box" style="background:#fff5f5;">불러오기 실패: ${err.message}</div>`;
         return;
     }
-    const validDocs = docs.filter(doc => doc.exists);
-    if (validDocs.length === 0) { alert('해당 요청을 찾을 수 없습니다.'); return; }
+    const validDocs = docs.filter(doc => doc.exists).map(doc => ({ ...doc.data(), _docId: doc.id }));
+    if (validDocs.length === 0) { detail.innerHTML = '<div class="info-box" style="background:#fff5f5;">해당 요청을 찾을 수 없습니다.</div>'; return; }
 
-    const first = validDocs[0].data();
-    const labelList = validDocs.map(doc => {
-        const acc = accessoryTypeInfo(doc.data().accessoryType) || { icon: '🎒', label: '물품' };
+    const first = validDocs[0];
+    const labelList = validDocs.map(d => {
+        const acc = accessoryTypeInfo(d.accessoryType) || { icon: '🎒', label: '물품' };
         return `${acc.icon} ${acc.label}`;
     }).join(', ');
 
-    if (!confirm(`${first.position || ''} - ${labelList}\n전달완료로 처리하시겠습니까?`)) return;
-
-    // 환자 성함은 전달할 때마다 다르므로 매번 새로 입력받습니다 (기본값 없음).
-    const patientName = (prompt(`${first.position || ''} - ${labelList}\n환자분 성함을 입력해 주세요.`, '') || '').trim();
-    if (!patientName) return;
-
-    // 전달하는 직원이 매번 다를 수 있어서, 최근 입력했던 이름을 기본값으로만 채워두고
-    // 매번 직접 확인/수정해서 입력하도록 합니다. (이름 입력창에서 취소하면 처리하지 않습니다.)
     const cachedName = localStorage.getItem('inspector_name_cache') || '';
-    const staff = (prompt(`${first.position || ''} - ${labelList}\n전달하시는 직원 이름을 입력해 주세요.`, cachedName) || '').trim();
-    if (!staff) return;
-    localStorage.setItem('inspector_name_cache', staff);
+    const idsLiteral = validDocs.map(d => `'${d._docId}'`).join(',');
 
+    detail.innerHTML = `
+        <div class="qr-check-card" style="margin-top:15px;">
+            <h2 style="margin-top:0;">${first.position || ''} 전달완료 처리</h2>
+            <div class="info-box" style="margin-bottom:15px;">신청 물품: ${labelList}</div>
+            <p style="margin-top:10px;">
+                환자분 성함: <input type="text" id="deliver-patient-name" class="table-input" style="width:100%;" placeholder="이름 입력"><br><br>
+                전달 직원: <input type="text" id="deliver-staff-name" class="table-input" style="width:100%;" placeholder="이름 입력" value="${cachedName}">
+            </p>
+            <button class="save-btn" onclick="confirmDeliverBatch([${idsLiteral}])">☁️ 전달완료 처리</button>
+            <button class="back-btn" style="margin-top:10px;" onclick="document.getElementById('facility-position-detail').innerHTML=''">취소</button>
+            <div id="deliver-batch-result" style="margin-top:15px; text-align:center; font-weight:bold;"></div>
+        </div>
+    `;
+}
+
+async function confirmDeliverBatch(loanDocIds) {
+    const nameInput = document.getElementById('deliver-patient-name');
+    const staffInput = document.getElementById('deliver-staff-name');
+    const resultEl = document.getElementById('deliver-batch-result');
+
+    const patientName = (nameInput ? nameInput.value : '').trim();
+    const staff = (staffInput ? staffInput.value : '').trim();
+
+    if (!patientName) { alert('환자분 성함을 입력해 주세요.'); if (nameInput) nameInput.focus(); return; }
+    if (!staff) { alert('전달하시는 직원 이름을 입력해 주세요.'); if (staffInput) staffInput.focus(); return; }
+
+    localStorage.setItem('inspector_name_cache', staff);
     const checkoutDate = new Date().toISOString().substring(0, 10);
 
     try {
         const batch = db.batch();
-        validDocs.forEach(doc => {
-            batch.update(doc.ref, {
+        loanDocIds.forEach(id => {
+            batch.update(db.collection('tablet_loans').doc(id), {
                 checkoutDate: checkoutDate,
                 checkoutStaff: staff,
                 patientName: patientName,
@@ -3626,36 +3645,63 @@ async function deliverPositionBatch(loanDocIds) {
             });
         });
         await batch.commit();
-        if (detail) detail.innerHTML = '';
+        if (resultEl) {
+            resultEl.style.color = '#28a745';
+            resultEl.textContent = '✅ 전달완료 처리되었습니다!';
+        }
+        setTimeout(() => {
+            const detail = document.getElementById('facility-position-detail');
+            if (detail) detail.innerHTML = '';
+        }, 900);
     } catch (err) {
         console.error(err);
-        alert('❌ 저장 실패: ' + err.message);
+        if (resultEl) {
+            resultEl.style.color = '#dc3545';
+            resultEl.textContent = '❌ 저장 실패: ' + err.message;
+        }
     }
 }
 
-// ---- 직원: 반납 확인/회수 처리 화면 (환자가 제출한 사진과 대조 후 처리) ----
-async function openReturnConfirmForm(loanDocId) {
+// ---- 직원: 반납 확인/회수 처리 화면 (같은 자리에서 반납신청된 물품들을 한 번에 확인/처리, 환자가 제출한 사진과 대조 후 처리) ----
+async function openReturnConfirmForm(loanDocIds) {
     const detail = document.getElementById('facility-position-detail');
     if (!detail) return;
     detail.innerHTML = '<p style="text-align:center; padding:20px; color:#6c757d;">불러오는 중...</p>';
+    detail.scrollIntoView({ behavior: 'smooth' });
 
-    const doc = await db.collection('tablet_loans').doc(loanDocId).get();
-    if (!doc.exists) { detail.innerHTML = '<div class="info-box" style="background:#fff5f5;">해당 요청을 찾을 수 없습니다.</div>'; return; }
-    const loan = doc.data();
-    const acc = accessoryTypeInfo(loan.accessoryType) || { icon: '🎒', label: '물품' };
+    let snaps;
+    try {
+        snaps = await Promise.all(loanDocIds.map(id => db.collection('tablet_loans').doc(id).get()));
+    } catch (err) {
+        console.error(err);
+        detail.innerHTML = `<div class="info-box" style="background:#fff5f5;">불러오기 실패: ${err.message}</div>`;
+        return;
+    }
+    const validDocs = snaps.filter(s => s.exists).map(s => ({ ...s.data(), _docId: s.id }));
+    if (validDocs.length === 0) { detail.innerHTML = '<div class="info-box" style="background:#fff5f5;">해당 요청을 찾을 수 없습니다.</div>'; return; }
+
+    const first = validDocs[0];
+    const itemsLabel = validDocs.map(d => {
+        const acc = accessoryTypeInfo(d.accessoryType) || { icon: '🎒', label: '물품' };
+        return `${acc.icon} ${acc.label}`;
+    }).join(', ');
     const cachedName = localStorage.getItem('inspector_name_cache') || '';
     const todayStr = new Date().toISOString().substring(0, 10);
 
-    const photoHtml = loan.returnPhotoSrc
+    const photosWithSrc = validDocs.filter(d => d.returnPhotoSrc);
+    const photoHtml = photosWithSrc.length
         ? `<div style="margin-top:12px;"><strong>📷 환자가 제출한 반납 사진</strong><br>
-            <img src="${loan.returnPhotoSrc}" class="img-preview" style="max-width:220px; max-height:220px; display:block; margin-top:6px; cursor:pointer;" onclick="openImageModal('${loan.returnPhotoSrc}')" title="클릭하여 확대"></div>`
+            ${photosWithSrc.map(d => `<img src="${d.returnPhotoSrc}" class="img-preview" style="max-width:180px; max-height:180px; display:inline-block; margin:6px 6px 0 0; cursor:pointer;" onclick="openImageModal('${d.returnPhotoSrc}')" title="클릭하여 확대">`).join('')}
+           </div>`
         : `<div style="margin-top:12px; color:#dc3545; font-weight:bold;">⚠️ 제출된 반납 사진이 없습니다.</div>`;
+
+    const idsLiteral = validDocs.map(d => `'${d._docId}'`).join(',');
 
     detail.innerHTML = `
         <div class="qr-check-card" style="margin-top:15px;">
-            <h2 style="margin-top:0;">${acc.icon} ${loan.position || ''} - ${acc.label} 회수 처리</h2>
+            <h2 style="margin-top:0;">${first.position || ''} - ${itemsLabel} 회수 처리</h2>
             <div class="info-box" style="margin-bottom:15px;">
-                환자명: ${loan.patientName || '-'} / 제공일자: ${loan.checkoutDate || '-'} / 제공직원: ${loan.checkoutStaff || '-'}
+                환자명: ${first.patientName || '-'} / 제공일자: ${first.checkoutDate || '-'} / 제공직원: ${first.checkoutStaff || '-'}
                 ${photoHtml}
             </div>
             <p>실제 물품을 대조 확인하신 후 회수 처리해 주세요.</p>
@@ -3663,15 +3709,14 @@ async function openReturnConfirmForm(loanDocId) {
                 회수일자: <input type="date" id="return-confirm-date" value="${todayStr}"><br><br>
                 회수직원: <input type="text" id="return-confirm-staff" placeholder="이름 입력" value="${cachedName}">
             </p>
-            <button class="save-btn" onclick="confirmReturn('${loanDocId}')">☁️ 회수 완료 처리</button>
+            <button class="save-btn" onclick="confirmReturn([${idsLiteral}])">☁️ 회수 완료 처리</button>
             <button class="back-btn" style="margin-top:10px;" onclick="document.getElementById('facility-position-detail').innerHTML=''">취소</button>
             <div id="return-confirm-result" style="margin-top:15px; text-align:center; font-weight:bold;"></div>
         </div>
     `;
-    detail.scrollIntoView({ behavior: 'smooth' });
 }
 
-async function confirmReturn(loanDocId) {
+async function confirmReturn(loanDocIds) {
     const date = document.getElementById('return-confirm-date').value;
     const staff = document.getElementById('return-confirm-staff').value.trim();
     const resultEl = document.getElementById('return-confirm-result');
@@ -3682,12 +3727,16 @@ async function confirmReturn(loanDocId) {
     localStorage.setItem('inspector_name_cache', staff);
 
     try {
-        await db.collection('tablet_loans').doc(loanDocId).update({
-            returnDate: date,
-            returnStaff: staff,
-            status: 'returned',
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        const batch = db.batch();
+        loanDocIds.forEach(id => {
+            batch.update(db.collection('tablet_loans').doc(id), {
+                returnDate: date,
+                returnStaff: staff,
+                status: 'returned',
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
         });
+        await batch.commit();
         resultEl.style.color = '#28a745';
         resultEl.textContent = '✅ 회수 처리되었습니다!';
         setTimeout(() => { document.getElementById('facility-position-detail').innerHTML = ''; }, 1200);
@@ -3760,7 +3809,7 @@ async function openPositionManualEntry() {
     if (loan.status === 'requested') {
         deliverPositionBatch([loanDoc.id]);
     } else {
-        openReturnConfirmForm(loanDoc.id);
+        openReturnConfirmForm([loanDoc.id]);
     }
 }
 
