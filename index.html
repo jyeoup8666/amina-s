@@ -3515,10 +3515,15 @@ async function enterPositionQrCheckMode(position) {
         <div class="qr-check-card">
             <h2 style="margin-top:0; text-align:center;">🛏️ ${position}</h2>
             <p style="font-size:13px; color:#6c757d; text-align:center;">필요하신 물품을 O로 선택하신 뒤 아래 버튼을 눌러주세요.</p>
-            <details style="margin-bottom:12px;">
-                <summary style="cursor:pointer; font-weight:bold; color:#2b569a; font-size:13px;">📄 대여 이용약관 보기</summary>
-                ${getTermsContentHtml()}
-            </details>
+            <div style="margin-bottom:12px; padding:10px 12px; background:#fff9e6; border:1px solid #ffe58f; border-radius:6px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <span style="font-size:12px; color:#8a6d1a; flex:1; min-width:160px;">📄 대여 이용약관: 분실·파손 시 배상 기준 등 물품 대여 이용 안내입니다.</span>
+                    <button type="button" class="back-btn" id="pos-terms-toggle-btn" style="margin:0; padding:7px 12px; font-size:12px; flex-shrink:0;" onclick="togglePositionTerms(this)">펼쳐서 보기</button>
+                </div>
+                <div id="pos-terms-full" class="hidden" style="margin-top:10px;">
+                    ${getTermsContentHtml()}
+                </div>
+            </div>
             ${patientNameFieldHtml}
             ${rowsHtml}
             <button class="save-btn" style="margin-top:15px;" onclick="submitPositionRequests('${position}')">✅ 선택한 물품 요청하기</button>
@@ -3533,6 +3538,14 @@ async function enterPositionQrCheckMode(position) {
             compressImageToPreview(this, 'pos-return-photo-preview');
         });
     }
+}
+
+// 이용약관 요약 문구 아래의 "펼쳐서 보기" 버튼 - 전체 약관을 접었다 펼쳤다 합니다.
+function togglePositionTerms(btnEl) {
+    const box = document.getElementById('pos-terms-full');
+    if (!box) return;
+    const nowHidden = box.classList.toggle('hidden');
+    btnEl.textContent = nowHidden ? '펼쳐서 보기' : '접기';
 }
 
 function setPositionRequestToggle(btnEl) {
