@@ -132,6 +132,26 @@
         /* --- QR 현장 점검(스캔용) 스타일 --- */
         .qr-check-card { max-width: 480px; margin: 0 auto; background: white; border: 1px solid #e2e5e9; border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 
+        /* QR로 들어온 화면(환자가 직접 스캔하거나, 직원이 현장에서 스캔)은 대부분 휴대폰에서 보므로
+           여백을 줄이고 글자/버튼을 더 크게 해서 모바일에서 쓰기 편하게 합니다. */
+        body.qr-mode { padding: 10px; }
+        body.qr-mode .container { padding: 14px 12px; border-radius: 10px; }
+        body.qr-mode .qr-check-card { max-width: 100%; padding: 16px 14px; box-sizing: border-box; }
+        body.qr-mode .qr-check-card h2 { font-size: 19px; }
+        body.qr-mode .qr-check-row { padding: 12px 0; flex-wrap: wrap; row-gap: 8px; }
+        body.qr-mode .qr-check-label { font-size: 15px; }
+        body.qr-mode .toggle-btn { padding: 12px 18px; font-size: 14px; min-width: 50px; }
+        body.qr-mode .save-btn { padding: 15px 20px; font-size: 17px; }
+        body.qr-mode .back-btn { padding: 12px 18px; font-size: 15px; }
+        /* iOS 사파리는 입력창 글자 크기가 16px보다 작으면 탭할 때 화면이 확대되므로 16px 이상으로 맞춥니다. */
+        body.qr-mode input[type="text"],
+        body.qr-mode input[type="date"],
+        body.qr-mode input[type="file"] { font-size: 16px; padding: 10px; box-sizing: border-box; }
+        body.qr-mode input[type="text"].table-input { width: 100%; }
+        body.qr-mode .info-box { font-size: 14px; }
+        body.qr-mode details summary { padding: 6px 0; }
+        body.qr-mode .terms-box { font-size: 13px; }
+
         /* --- 공식 서류 양식(결재란 + 표 형태) 공용 스타일 - 앞으로 다른 서류도 이 틀을 재사용합니다 --- */
         .official-form-sheet { max-width: 720px; margin: 0 auto 25px auto; background: white; border: 1px solid #e2e5e9; border-radius: 10px; padding: 25px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
         .official-form-headrow { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; margin-bottom: 15px; }
@@ -3158,8 +3178,8 @@ function getPositionFloor(position) {
     return room ? `${room.charAt(0)}F` : '';
 }
 
-// ---- 이용약관 + 서명 UI (태블릿 제공 / 부속품 단독 대여 공통으로 사용) ----
-function getTermsHtml() {
+// ---- 이용약관 내용만(체크박스/서명 없이) - 환자용 QR 화면 등 참고용 표시에 씁니다 ----
+function getTermsContentHtml() {
     return `
         <div class="info-box terms-box">
             <strong>📄 태블릿 등 물품 대여 이용약관</strong>
@@ -3181,6 +3201,13 @@ function getTermsHtml() {
             </ol>
             <p style="margin-top:8px; color:#dc3545; font-weight:bold;">※ 위 금액은 예시이며, 실제 배상 금액이 정해지면 수정이 필요합니다.</p>
         </div>
+    `;
+}
+
+// ---- 이용약관 + 서명 UI (태블릿 제공 / 부속품 단독 대여 - 직원이 수동 등록할 때 공통으로 사용) ----
+function getTermsHtml() {
+    return `
+        ${getTermsContentHtml()}
         <p style="margin-top:10px;">
             <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
                 <input type="checkbox" id="terms-agree-checkbox" style="width:16px; height:16px;">
@@ -3488,6 +3515,10 @@ async function enterPositionQrCheckMode(position) {
         <div class="qr-check-card">
             <h2 style="margin-top:0; text-align:center;">🛏️ ${position}</h2>
             <p style="font-size:13px; color:#6c757d; text-align:center;">필요하신 물품을 O로 선택하신 뒤 아래 버튼을 눌러주세요.</p>
+            <details style="margin-bottom:12px;">
+                <summary style="cursor:pointer; font-weight:bold; color:#2b569a; font-size:13px;">📄 대여 이용약관 보기</summary>
+                ${getTermsContentHtml()}
+            </details>
             ${patientNameFieldHtml}
             ${rowsHtml}
             <button class="save-btn" style="margin-top:15px;" onclick="submitPositionRequests('${position}')">✅ 선택한 물품 요청하기</button>
