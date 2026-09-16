@@ -1251,20 +1251,50 @@
         return m[0].replace(/\s*(G호|호)\s*$/, '').trim();
     }
 
+    // 구체적으로 "무엇이" 문제인지 (설비/물건 이름) - 뱃지 제목(예: "에어컨 누수")과, 아래 애매한 증상들을
+    // 서로 다른 설비끼리 잘못 묶지 않게 구분하는 데 씁니다.
+    const EQUIPMENT_KEYWORDS = [
+        '에어컨', '냉장고', '보일러', '정수기', '세탁기', '건조기', '공기청정기', '냉난방기', '온수기',
+        '화장실', '변기', '샤워기', '샤워', '싱크대', '수도', '전등', '전구', '엘리베이터', '승강기',
+        '커튼', '창문', '문고리', '문짝', '리모컨', 'TV', '티비', '콜벨', '침대', '멀티탭'
+    ];
+    function getEquipment(text) {
+        if (!text) return null;
+        for (const eq of EQUIPMENT_KEYWORDS) {
+            if (text.includes(eq)) return eq;
+        }
+        return null;
+    }
+
+    // 증상 카테고리. "누수/정전/단수/엘리베이터"처럼 설비 이름이 없어도 그 자체로 뜻이 분명한 것들만
+    // needsEquipment:false 로 두고, "고장/온도불편/소음"처럼 워낙 포괄적인 표현(예: "작동이 안 된다"는
+    // 콜벨이든 TV든 다 쓰는 말)은 needsEquipment:true 로 표시해서 같은 설비일 때만 같은 문제로 취급합니다.
     const ISSUE_CATEGORIES = [
-        { label: '누수', keywords: ['누수', '샌다', '새는', '새요', '샙니다', '새고 있', '새고있'] },
-        { label: '정전/전기', keywords: ['정전', '전등', '전구', '작동이 안', '작동 안', '작동안'] },
-        { label: '단수/온수', keywords: ['단수', '온수', '수도'] },
-        { label: '냉난방', keywords: ['보일러', '난방', '에어컨'] },
-        { label: '위생/냄새', keywords: ['냄새', '더러워서', '더럽다', '더러운', '못쓰겠', '못 쓰겠'] },
-        { label: '고장', keywords: ['고장', '안됩니다', '안돼요', '안 돼요', '안 됩니다', '안나옵니다', '안 나옵니다', '안나와요', '안 나와요', '터졌', '깨졌', '금이'] },
-        { label: '엘리베이터', keywords: ['엘리베이터', '승강기'] }
+        { label: '누수', keywords: ['누수', '샌다', '새는', '새요', '샙니다', '새고 있', '새고있'], needsEquipment: false },
+        { label: '정전', keywords: ['정전'], needsEquipment: false },
+        { label: '단수', keywords: ['단수'], needsEquipment: false },
+        { label: '엘리베이터', keywords: ['엘리베이터', '승강기'], needsEquipment: false },
+        { label: '고장', keywords: ['고장', '안됩니다', '안돼요', '안 돼요', '안 됩니다', '안나옵니다', '안 나옵니다', '안나와요', '안 나와요', '안되는', '안 되는', '작동이 안', '작동 안', '작동안', '터졌', '깨졌', '금이'], needsEquipment: true },
+        { label: '온도불편', keywords: ['춥다', '추워', '더워', '덥다', '추운', '더운'], needsEquipment: true },
+        { label: '소음', keywords: ['소음', '시끄러', '소리가 크', '소리도 크'], needsEquipment: true },
+        { label: '냄새/위생', keywords: ['냄새', '더러워서', '더럽다', '더러운', '못쓰겠', '못 쓰겠'], needsEquipment: false }
     ];
 
-    function getIssueCategory(text) {
+    // "설치해달라/설치 부탁" 같은 표현은 고장 신고가 아니라 새로 놔달라는 요청이라서, 같은 설비를
+    // 반복 언급해도 "반복 민원(고장)"으로 취급하지 않습니다.
+    const INSTALL_REQUEST_KEYWORDS = ['설치해', '설치 해', '설치부탁', '설치 부탁', '설치요청', '설치 요청', '설치해주', '설치 해주'];
+
+    // 호실 + (필요하면) 설비 + 증상까지 맞아야 "같은 민원"으로 봅니다. (예: "에어컨"이 같아도
+    // "바람이 차갑다"와 "바람막이 설치해달라"는 서로 다른 민원이므로 따로 취급됩니다.)
+    function getIssueInfo(text) {
         if (!text) return null;
+        if (INSTALL_REQUEST_KEYWORDS.some(kw => text.includes(kw))) return null;
         for (const cat of ISSUE_CATEGORIES) {
-            if (cat.keywords.some(kw => text.includes(kw))) return cat.label;
+            if (cat.keywords.some(kw => text.includes(kw))) {
+                const equipment = getEquipment(text);
+                if (cat.needsEquipment && !equipment) return null; // 어떤 설비인지 특정 못하면 묶지 않음
+                return { category: cat.label, equipment };
+            }
         }
         return null;
     }
@@ -1287,25 +1317,29 @@
                 .filter(({ item }) => isLikelyFacilityRequest(item.text)) // 시설요청이 아닌 메시지는 아예 표시하지 않음
             : [];
 
-        // 같은 호실 + 같은 증상 민원을 전체 이력(완료 포함) 기준으로 묶어서, 2번 이상이면 "반복 민원"으로 표시합니다.
-        const roomIssueGroups = new Map(); // "508|누수" -> [{key, item}]
+        // 같은 호실 + 같은 설비(있으면) + 같은 증상 민원을 전체 이력(완료 포함) 기준으로 묶어서,
+        // 2번 이상이면 "반복 민원"으로 표시합니다. (예: "301호 에어컨 누수")
+        const roomIssueGroups = new Map(); // "508|누수|" 또는 "403|고장|에어컨" -> [{key, item}]
+        const roomIssueTitle = (room, info) => `${room}호 ${info.equipment ? info.equipment + ' ' : ''}${info.category}`;
         entries.forEach(({ key, item }) => {
             const room = extractRoomNumber(item.text);
-            const issue = room ? getIssueCategory(item.text) : null;
-            if (!room || !issue) return;
-            const groupKey = room + '|' + issue;
+            const info = room ? getIssueInfo(item.text) : null;
+            if (!room || !info) return;
+            const groupKey = room + '|' + info.category + '|' + (info.equipment || '');
             if (!roomIssueGroups.has(groupKey)) roomIssueGroups.set(groupKey, []);
             roomIssueGroups.get(groupKey).push({ key, item });
         });
         const getRepeatBadge = (key, item) => {
             const room = extractRoomNumber(item.text);
-            const issue = room ? getIssueCategory(item.text) : null;
-            if (!room || !issue) return '';
-            const group = roomIssueGroups.get(room + '|' + issue);
+            const info = room ? getIssueInfo(item.text) : null;
+            if (!room || !info) return '';
+            const groupKey = room + '|' + info.category + '|' + (info.equipment || '');
+            const group = roomIssueGroups.get(groupKey);
             if (!group || group.length < 2) return '';
             const sorted = [...group].sort((a, b) => (a.item.timestamp || 0) - (b.item.timestamp || 0));
             const ordinal = sorted.findIndex(g => g.key === key) + 1;
-            return `<span class="priority-badge" style="background:#6f42c1; color:white;" title="${room}호에서 같은 증상(${issue})이 ${group.length}번 반복 접수됨">🔁 반복민원 ${ordinal}/${group.length}·${issue}</span>`;
+            const title = roomIssueTitle(room, info);
+            return `<span class="priority-badge" style="background:#6f42c1; color:white;" title="${title}이(가) ${group.length}번 반복 접수됨">🔁 반복민원 ${ordinal}/${group.length}·${title}</span>`;
         };
 
         const activeItems = [];
