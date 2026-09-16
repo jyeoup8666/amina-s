@@ -367,6 +367,7 @@
                         <p style="margin: 5px 0 0 0; font-size: 13px; color: #6c757d;">답장을 통해 처리가 완료된 수리 요청 목록입니다.</p>
                     </div>
                     <div style="display: flex; gap: 10px; align-items: center;">
+                        <button id="toggleRepeatOnlyBtn" class="toggle-history-btn" style="background:#6f42c1;" onclick="toggleRepeatOnlyFilter()">🔁 반복민원만 보기</button>
                         <button class="back-btn" style="margin-bottom: 0;" onclick="switchRequestView('active')">← 진행 중인 현황 보기</button>
                     </div>
                 </div>
@@ -1239,6 +1240,35 @@
         return false;
     }
 
+    // ---- 재차 반복되는 민원(예: 같은 호실에서 계속 누수) 감지용 ----
+    // 단순 접수 순서가 아니라 "같은 호실 + 같은 증상"이 2번 이상 반복될 때만 반복 민원으로 봅니다.
+    // (물품요청/설치처럼 증상이 없는 단순 요청은 반복되어도 큰 의미가 없어서 카테고리에서 제외)
+    function extractRoomNumber(text) {
+        if (!text) return null;
+        const withoutPhone = text.replace(PHONE_NUMBER_PATTERN, '');
+        const m = withoutPhone.match(ROOM_NUMBER_PATTERN);
+        if (!m || !m[0].trim()) return null;
+        return m[0].replace(/\s*(G호|호)\s*$/, '').trim();
+    }
+
+    const ISSUE_CATEGORIES = [
+        { label: '누수', keywords: ['누수', '샌다', '새는', '새요', '샙니다', '새고 있', '새고있'] },
+        { label: '정전/전기', keywords: ['정전', '전등', '전구', '작동이 안', '작동 안', '작동안'] },
+        { label: '단수/온수', keywords: ['단수', '온수', '수도'] },
+        { label: '냉난방', keywords: ['보일러', '난방', '에어컨'] },
+        { label: '위생/냄새', keywords: ['냄새', '더러워서', '더럽다', '더러운', '못쓰겠', '못 쓰겠'] },
+        { label: '고장', keywords: ['고장', '안됩니다', '안돼요', '안 돼요', '안 됩니다', '안나옵니다', '안 나옵니다', '안나와요', '안 나와요', '터졌', '깨졌', '금이'] },
+        { label: '엘리베이터', keywords: ['엘리베이터', '승강기'] }
+    ];
+
+    function getIssueCategory(text) {
+        if (!text) return null;
+        for (const cat of ISSUE_CATEGORIES) {
+            if (cat.keywords.some(kw => text.includes(kw))) return cat.label;
+        }
+        return null;
+    }
+
     // ---- 실시간 시설요청 현황: 라인 시설요청(RTDB) + 자리별 QR 대여요청/반납신청(Firestore)을 한 보드에 합쳐서 보여줍니다. ----
     // 두 데이터 소스가 각자 실시간으로 갱신되므로, 최신 값을 캐시해뒀다가 어느 쪽이 갱신되든 같은 렌더 함수를 다시 호출합니다.
     let latestFacilityRtdbData = null;
@@ -1256,6 +1286,27 @@
                 .map(([key, item]) => ({ key, item }))
                 .filter(({ item }) => isLikelyFacilityRequest(item.text)) // 시설요청이 아닌 메시지는 아예 표시하지 않음
             : [];
+
+        // 같은 호실 + 같은 증상 민원을 전체 이력(완료 포함) 기준으로 묶어서, 2번 이상이면 "반복 민원"으로 표시합니다.
+        const roomIssueGroups = new Map(); // "508|누수" -> [{key, item}]
+        entries.forEach(({ key, item }) => {
+            const room = extractRoomNumber(item.text);
+            const issue = room ? getIssueCategory(item.text) : null;
+            if (!room || !issue) return;
+            const groupKey = room + '|' + issue;
+            if (!roomIssueGroups.has(groupKey)) roomIssueGroups.set(groupKey, []);
+            roomIssueGroups.get(groupKey).push({ key, item });
+        });
+        const getRepeatBadge = (key, item) => {
+            const room = extractRoomNumber(item.text);
+            const issue = room ? getIssueCategory(item.text) : null;
+            if (!room || !issue) return '';
+            const group = roomIssueGroups.get(room + '|' + issue);
+            if (!group || group.length < 2) return '';
+            const sorted = [...group].sort((a, b) => (a.item.timestamp || 0) - (b.item.timestamp || 0));
+            const ordinal = sorted.findIndex(g => g.key === key) + 1;
+            return `<span class="priority-badge" style="background:#6f42c1; color:white;" title="${room}호에서 같은 증상(${issue})이 ${group.length}번 반복 접수됨">🔁 반복민원 ${ordinal}/${group.length}·${issue}</span>`;
+        };
 
         const activeItems = [];
         const completedItems = [];
@@ -1350,12 +1401,14 @@
         allActiveRows.forEach(row => {
             activeRowNum++;
             if (row.kind === 'facility') {
+                const key = row.entry.key;
                 const item = row.entry.item;
                 const dateStr = item.timestamp ? new Date(item.timestamp).toLocaleString('ko-KR') : '-';
                 const priority = getRequestPriority(item.text);
                 const rowClass = priority === 2 ? 'priority-row-high' : (priority === 0 ? 'priority-row-low' : '');
                 // 뱃지는 우선(긴급) 항목에만 표시합니다. 후순위는 배경만 옅게 표시하고 뱃지는 넣지 않습니다.
                 const priorityBadge = priority === 2 ? '<span class="priority-badge high">🔴 우선</span>' : '';
+                const repeatBadge = getRepeatBadge(key, item);
                 // 완료를 뜻하지 않는 답장(재요청/방문예정 등)은 삭제선 없이 노트로만 붙여서 보여줍니다. 답장이 여러 개면 전부 보여줍니다.
                 const replyNote = renderRepliesHtml(item, '#17a2b8');
 
@@ -1363,7 +1416,7 @@
                     <tr class="${rowClass}">
                         <td>${activeRowNum}</td>
                         <td>${dateStr}</td>
-                        <td style="text-align: left; font-weight: bold; padding-left: 15px;">${priorityBadge}${item.text || ''}${replyNote}</td>
+                        <td style="text-align: left; font-weight: bold; padding-left: 15px;">${priorityBadge}${repeatBadge}${item.text || ''}${replyNote}</td>
                     </tr>
                 `;
             } else {
@@ -1384,7 +1437,11 @@
         });
 
         let completedHtml = '';
-        completedItems.forEach(({ key, item }, i) => {
+        // "반복민원만 보기"가 켜져 있으면 같은 호실+같은 증상이 2번 이상 접수된 완료 항목만 남깁니다.
+        const completedItemsToShow = showOnlyRepeatComplaints
+            ? completedItems.filter(({ key, item }) => !!getRepeatBadge(key, item))
+            : completedItems;
+        completedItemsToShow.forEach(({ key, item }, i) => {
             const dateStr = item.timestamp
                 ? new Date(item.timestamp).toLocaleString('ko-KR')
                 : '-';
@@ -1392,13 +1449,14 @@
                 ? new Date(item.completedAt).toLocaleString('ko-KR')
                 : '-';
             const replyNote = renderRepliesHtml(item, '#28a745');
+            const repeatBadge = getRepeatBadge(key, item);
 
             completedHtml += `
                 <tr style="background-color: #f8f9fa; color: #6c757d;">
                     <td>${i + 1}</td>
                     <td>${dateStr}</td>
                     <td style="text-align: left; padding-left: 15px;">
-                        <span style="text-decoration: line-through;">${item.text || ''}</span>
+                        ${repeatBadge}<span style="text-decoration: line-through;">${item.text || ''}</span>
                         ${replyNote}
                     </td>
                     <td><span style="color: #28a745; font-weight: bold;">완료 (${completedDateStr})</span></td>
@@ -1411,7 +1469,8 @@
         }
 
         if (historyTbody) {
-            historyTbody.innerHTML = completedHtml || '<tr><td colspan="4" style="color: #6c757d; padding: 20px;">완료된 내역이 없습니다.</td></tr>';
+            const emptyMsg = showOnlyRepeatComplaints ? '반복 민원이 없습니다.' : '완료된 내역이 없습니다.';
+            historyTbody.innerHTML = completedHtml || `<tr><td colspan="4" style="color: #6c757d; padding: 20px;">${emptyMsg}</td></tr>`;
         }
 
         // 작은 창(팝업) 현황판: 위에서 만든 목록을 그대로 재사용해서 같은 순서로 보여줍니다 (호실별로 묶지 않음).
@@ -1515,6 +1574,18 @@
             completedView.classList.add('hidden');
             activeView.classList.remove('hidden');
         }
+    }
+
+    // 완료된 수리 요청 내역에서 "같은 호실+같은 증상이 반복된 민원"만 걸러서 볼 수 있는 토글입니다.
+    let showOnlyRepeatComplaints = false;
+    function toggleRepeatOnlyFilter() {
+        showOnlyRepeatComplaints = !showOnlyRepeatComplaints;
+        const btn = document.getElementById('toggleRepeatOnlyBtn');
+        if (btn) {
+            btn.textContent = showOnlyRepeatComplaints ? '전체 이력 보기' : '🔁 반복민원만 보기';
+            btn.style.background = showOnlyRepeatComplaints ? '#495057' : '#6f42c1';
+        }
+        renderFacilityBoard();
     }
 
     // 3. 점검 대상 호실 목록
