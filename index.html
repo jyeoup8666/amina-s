@@ -327,6 +327,8 @@
             <div class="menu-btn" onclick="showPage('fire-menu')">🧯 소화기 점검표</div>
             <div class="menu-btn" onclick="showPage('water')">💧 정수기 점검표</div>
             <div class="menu-btn" onclick="showPage('tablet-menu')">📱 태블릿 대여 관리</div>
+            <div class="menu-btn" onclick="showPage('laundry')">🧺 세탁기·건조기 관리대장</div>
+            <div class="menu-btn" onclick="showPage('misc-equip')">🔧 기타 기기 관리대장</div>
         </div>
 
         <!-- 실시간 수리 요청 현황 영역 -->
@@ -1018,6 +1020,249 @@
                 </thead>
                 <tbody id="water-history-body">
                     <tr><td colspan="3">불러오는 중...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 세탁기·건조기 관리대장 -->
+    <div id="page-laundry" class="hidden">
+        <button class="back-btn" onclick="showPage('facility-team')">← 시설팀 메뉴로</button>
+        <h2>🧺 세탁기·건조기 관리대장</h2>
+        <p>원하시는 작업을 선택하세요.</p>
+        <div class="menu-grid">
+            <div class="menu-btn-sub" onclick="showPage('laundry-dashboard')">📊 관리대장 현황판</div>
+            <div class="menu-btn-sub" onclick="showPage('laundry-log')">📝 수리이력 입력</div>
+            <div class="menu-btn-sub" onclick="showPage('laundry-log-history')">📜 입력 이력 조회</div>
+        </div>
+    </div>
+
+    <div id="page-laundry-dashboard" class="hidden">
+        <div class="no-print" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <button class="back-btn" onclick="showPage('laundry')">← 이전 메뉴로</button>
+            <button class="toggle-history-btn no-print" onclick="printHistoryPage('landscape')">🖨️ 인쇄 (A4 가로)</button>
+        </div>
+        <h2>📊 세탁기·건조기 관리대장 현황판</h2>
+        <p class="no-print" style="font-size: 13px; color: #6c757d;">* 행을 클릭하면 해당 기기의 수리 이력을 볼 수 있습니다.</p>
+        <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>층</th>
+                        <th>위치</th>
+                        <th>관리번호</th>
+                        <th>구분</th>
+                        <th>품명</th>
+                        <th>모델명</th>
+                        <th>최근 수리일</th>
+                        <th>수리 건수</th>
+                        <th>상태</th>
+                    </tr>
+                </thead>
+                <tbody id="laundry-dashboard-body">
+                    <tr><td colspan="9">데이터를 불러오는 중입니다...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="page-laundry-log" class="hidden">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <button class="back-btn" onclick="showPage('laundry')">← 이전 메뉴로</button>
+            <button class="toggle-history-btn" onclick="showPage('laundry-log-history')">📜 입력 이력 보기</button>
+        </div>
+        <h2>📝 세탁기·건조기 수리이력 입력</h2>
+        <div class="qr-check-card" style="max-width: 520px; margin: 0;">
+            <p>수리일자: <input type="date" id="laundry-log-date"></p>
+            <p style="font-weight: bold; margin-bottom: 5px;">관리번호</p>
+            <select id="laundry-log-unit" class="table-input" style="width: 100%; padding: 8px;" onchange="onRepairLogUnitChange('laundry')"></select>
+            <p id="laundry-log-unit-info" style="color: #2b569a; font-weight: bold; font-size: 13px; margin-top: 10px;"></p>
+            <p>수리 내용: <input type="text" id="laundry-log-content" class="table-input" style="width: 100%;" placeholder="예: 배수펌프 모터교체"></p>
+            <p>수리 금액(원): <input type="number" id="laundry-log-cost" class="table-input" style="width: 100%;" placeholder="0" min="0"></p>
+            <p style="font-weight: bold; margin-bottom: 5px;">진행상태</p>
+            <select id="laundry-log-status" class="table-input" style="width: 100%; padding: 8px;">
+                <option value="수리완료">수리완료</option>
+                <option value="진행중">진행중</option>
+                <option value="접수">접수</option>
+            </select>
+            <p>비고 (선택): <input type="text" id="laundry-log-note" class="table-input" style="width: 100%;" placeholder="예: 업체 관리"></p>
+            <button class="save-btn" onclick="saveRepairLog('laundry')">☁️ 저장하기</button>
+            <div id="laundry-log-result" style="margin-top: 15px; text-align: center; font-weight: bold;"></div>
+        </div>
+        <div class="history-box" style="margin-top: 25px;">
+            <strong>📅 초기 데이터 불러오기 (최초 1회만)</strong>
+            <p style="font-size: 13px; color: #6c757d; margin: 5px 0;">기존에 관리하시던 스프레드시트의 수리 이력을 한 번에 불러옵니다. 이미 불러왔다면 다시 누르셔도 중복 저장되지 않습니다.</p>
+            <button class="sync-btn" onclick="seedRepairInitialData('laundry')">기존 스프레드시트 수리이력 불러오기</button>
+        </div>
+    </div>
+
+    <div id="page-laundry-log-history" class="hidden">
+        <div class="no-print" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <button class="back-btn" onclick="showPage('laundry-log')">← 입력으로</button>
+            <button class="toggle-history-btn no-print" onclick="printHistoryPage('landscape')">🖨️ 인쇄 (A4 가로)</button>
+        </div>
+        <h2 class="no-print">📜 세탁기·건조기 수리이력 입력 이력</h2>
+        <p class="no-print">조회할 월: <input type="month" id="laundry-log-history-month" onchange="renderRepairRecentLogs('laundry')"></p>
+        <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>수리일자</th>
+                        <th>관리번호</th>
+                        <th>품명</th>
+                        <th>수리 내용</th>
+                        <th>수리 금액</th>
+                        <th>진행상태</th>
+                        <th>비고</th>
+                    </tr>
+                </thead>
+                <tbody id="laundry-recent-log-body">
+                    <tr><td colspan="7">데이터를 불러오는 중입니다...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="page-laundry-history" class="hidden">
+        <div class="no-print" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <button class="back-btn" onclick="showPage('laundry-dashboard')">← 현황판으로</button>
+            <button class="toggle-history-btn no-print" onclick="printHistoryPage('portrait')">🖨️ 인쇄</button>
+        </div>
+        <h2 id="laundry-history-title">📍 수리 이력</h2>
+        <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 8%;">NO</th>
+                        <th style="width: 15%;">수리일자</th>
+                        <th>수리 내용</th>
+                        <th style="width: 15%;">수리 금액</th>
+                        <th style="width: 12%;">진행상태</th>
+                    </tr>
+                </thead>
+                <tbody id="laundry-history-body">
+                    <tr><td colspan="5">불러오는 중...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 기타 기기 관리대장 -->
+    <div id="page-misc-equip" class="hidden">
+        <button class="back-btn" onclick="showPage('facility-team')">← 시설팀 메뉴로</button>
+        <h2>🔧 기타 기기 관리대장</h2>
+        <p>원하시는 작업을 선택하세요.</p>
+        <div class="menu-grid">
+            <div class="menu-btn-sub" onclick="showPage('misc-equip-dashboard')">📊 관리대장 현황판</div>
+            <div class="menu-btn-sub" onclick="showPage('misc-equip-log')">📝 수리이력 입력</div>
+            <div class="menu-btn-sub" onclick="showPage('misc-equip-log-history')">📜 입력 이력 조회</div>
+        </div>
+    </div>
+
+    <div id="page-misc-equip-dashboard" class="hidden">
+        <div class="no-print" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <button class="back-btn" onclick="showPage('misc-equip')">← 이전 메뉴로</button>
+            <button class="toggle-history-btn no-print" onclick="printHistoryPage('landscape')">🖨️ 인쇄 (A4 가로)</button>
+        </div>
+        <h2>📊 기타 기기 관리대장 현황판</h2>
+        <p class="no-print" style="font-size: 13px; color: #6c757d;">* 행을 클릭하면 해당 기기의 수리 이력을 볼 수 있습니다.</p>
+        <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>품목</th>
+                        <th>관리번호</th>
+                        <th>품명</th>
+                        <th>모델명</th>
+                        <th>설치 위치</th>
+                        <th>최근 수리일</th>
+                        <th>수리 건수</th>
+                        <th>상태</th>
+                    </tr>
+                </thead>
+                <tbody id="misc-equip-dashboard-body">
+                    <tr><td colspan="8">데이터를 불러오는 중입니다...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="page-misc-equip-log" class="hidden">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <button class="back-btn" onclick="showPage('misc-equip')">← 이전 메뉴로</button>
+            <button class="toggle-history-btn" onclick="showPage('misc-equip-log-history')">📜 입력 이력 보기</button>
+        </div>
+        <h2>📝 기타 기기 수리이력 입력</h2>
+        <div class="qr-check-card" style="max-width: 520px; margin: 0;">
+            <p>수리일자: <input type="date" id="misc-equip-log-date"></p>
+            <p style="font-weight: bold; margin-bottom: 5px;">관리번호</p>
+            <select id="misc-equip-log-unit" class="table-input" style="width: 100%; padding: 8px;" onchange="onRepairLogUnitChange('misc-equip')"></select>
+            <p id="misc-equip-log-unit-info" style="color: #2b569a; font-weight: bold; font-size: 13px; margin-top: 10px;"></p>
+            <p>수리 내용: <input type="text" id="misc-equip-log-content" class="table-input" style="width: 100%;" placeholder="예: 프리필터 교체"></p>
+            <p>수리 금액(원): <input type="number" id="misc-equip-log-cost" class="table-input" style="width: 100%;" placeholder="0" min="0"></p>
+            <p style="font-weight: bold; margin-bottom: 5px;">진행상태</p>
+            <select id="misc-equip-log-status" class="table-input" style="width: 100%; padding: 8px;">
+                <option value="수리완료">수리완료</option>
+                <option value="진행중">진행중</option>
+                <option value="접수">접수</option>
+            </select>
+            <p>비고 (선택): <input type="text" id="misc-equip-log-note" class="table-input" style="width: 100%;" placeholder="예: 업체 관리"></p>
+            <button class="save-btn" onclick="saveRepairLog('misc-equip')">☁️ 저장하기</button>
+            <div id="misc-equip-log-result" style="margin-top: 15px; text-align: center; font-weight: bold;"></div>
+        </div>
+        <div class="history-box" style="margin-top: 25px;">
+            <strong>📅 초기 데이터 불러오기 (최초 1회만)</strong>
+            <p style="font-size: 13px; color: #6c757d; margin: 5px 0;">기존에 관리하시던 스프레드시트의 수리 이력을 한 번에 불러옵니다. 이미 불러왔다면 다시 누르셔도 중복 저장되지 않습니다.</p>
+            <button class="sync-btn" onclick="seedRepairInitialData('misc-equip')">기존 스프레드시트 수리이력 불러오기</button>
+        </div>
+    </div>
+
+    <div id="page-misc-equip-log-history" class="hidden">
+        <div class="no-print" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <button class="back-btn" onclick="showPage('misc-equip-log')">← 입력으로</button>
+            <button class="toggle-history-btn no-print" onclick="printHistoryPage('landscape')">🖨️ 인쇄 (A4 가로)</button>
+        </div>
+        <h2 class="no-print">📜 기타 기기 수리이력 입력 이력</h2>
+        <p class="no-print">조회할 월: <input type="month" id="misc-equip-log-history-month" onchange="renderRepairRecentLogs('misc-equip')"></p>
+        <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>수리일자</th>
+                        <th>관리번호</th>
+                        <th>품명</th>
+                        <th>수리 내용</th>
+                        <th>수리 금액</th>
+                        <th>진행상태</th>
+                        <th>비고</th>
+                    </tr>
+                </thead>
+                <tbody id="misc-equip-recent-log-body">
+                    <tr><td colspan="7">데이터를 불러오는 중입니다...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="page-misc-equip-history" class="hidden">
+        <div class="no-print" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <button class="back-btn" onclick="showPage('misc-equip-dashboard')">← 현황판으로</button>
+            <button class="toggle-history-btn no-print" onclick="printHistoryPage('portrait')">🖨️ 인쇄</button>
+        </div>
+        <h2 id="misc-equip-history-title">📍 수리 이력</h2>
+        <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 8%;">NO</th>
+                        <th style="width: 15%;">수리일자</th>
+                        <th>수리 내용</th>
+                        <th style="width: 15%;">수리 금액</th>
+                        <th style="width: 12%;">진행상태</th>
+                    </tr>
+                </thead>
+                <tbody id="misc-equip-history-body">
+                    <tr><td colspan="5">불러오는 중...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -1770,6 +2015,12 @@
         if(pageId === 'water-log') initWaterLogForm();
         if(pageId === 'water-log-history') initWaterLogHistoryPage();
         if(pageId === 'water-detail') renderWaterDetailTable();
+        if(pageId === 'laundry-dashboard') renderRepairDashboard('laundry');
+        if(pageId === 'laundry-log') initRepairLogForm('laundry');
+        if(pageId === 'laundry-log-history') initRepairLogHistoryPage('laundry');
+        if(pageId === 'misc-equip-dashboard') renderRepairDashboard('misc-equip');
+        if(pageId === 'misc-equip-log') initRepairLogForm('misc-equip');
+        if(pageId === 'misc-equip-log-history') initRepairLogHistoryPage('misc-equip');
         if(pageId === 'admin-accounts') initAdminPanel();
     }
 
@@ -5371,7 +5622,340 @@ async function seedWaterInitialData() {
     }
 }
 
+// =========================================================
+// 15-1. 세탁기·건조기 / 기타 기기 관리대장 (수리이력 기반 공통 로직)
+// =========================================================
 
+const LAUNDRY_UNITS = [
+    { id: '6F-1', group: '6층', location: '6층 왼쪽', type: '직원용', name: '삼성 통돌이세탁기', model: 'B0KM53BF600496M' },
+    { id: '6F-2', group: '6층', location: '6층 가운데', type: '일반', name: '위닉스 전기건조기', model: 'HS3E400-NGK' },
+    { id: '6F-3', group: '6층', location: '6층 오른쪽 위', type: '일반', name: '삼성 전기건조기', model: 'DV90R6200KW' },
+    { id: '6F-4', group: '6층', location: '6층 오른쪽 아래', type: '일반', name: '삼성 드럼세탁기', model: 'WW90T3000KW' },
+    { id: '5F-1', group: '5층', location: '5층 왼쪽 위', type: '일반', name: '삼성 전기건조기', model: 'DV90R6200KW' },
+    { id: '5F-2', group: '5층', location: '5층 왼쪽 아래', type: '일반', name: '삼성 드럼세탁기', model: 'WW90T3000KW' },
+    { id: '5F-3', group: '5층', location: '5층 오른쪽', type: '직원용', name: '삼성 전기건조기', model: 'DV90TA040AE' },
+    { id: '4F-1', group: '4층', location: '4층 왼쪽', type: '직원용', name: '삼성 통돌이세탁기', model: 'T19MX7A' },
+    { id: '4F-2', group: '4층', location: '4층 가운데 위', type: '일반', name: '위닉스 전기건조기', model: 'HS3E400-NGK' },
+    { id: '4F-3', group: '4층', location: '4층 오른쪽 위', type: '일반', name: '삼성 전기건조기', model: 'DV90R6200KW' },
+    { id: '4F-4', group: '4층', location: '4층 오른쪽 아래', type: '일반', name: '삼성 드럼세탁기', model: 'WW90T3000KW' },
+    { id: '4F-5', group: '4층', location: '4층 가운데 아래', type: '일반', name: 'LG 트롬 건조기', model: 'RH9WF' },
+    { id: '3F-1', group: '3층', location: '3층 왼쪽 위', type: '일반', name: '삼성 전기건조기', model: 'DV90R6200KW' },
+    { id: '3F-2', group: '3층', location: '3층 왼쪽 아래', type: '일반', name: '삼성 드럼세탁기', model: 'T19MX7A' },
+    { id: '3F-3', group: '3층', location: '3층 오른쪽 위', type: '직원용', name: '삼성 전기건조기', model: 'DV90R6200KW' },
+    { id: '3F-4', group: '3층', location: '3층 오른쪽 아래', type: '직원용', name: '삼성 드럼세탁기', model: 'WF16T6000KW' }
+];
+
+const MISC_UNITS = [
+    { id: 'B1F-1', group: '공기살균기', location: '지하 1층 커뮤니티 룸', type: null, name: '세스코 공기살균기', model: 'CESCO UV Sterilizer' },
+    { id: '3F-1', group: '공기살균기', location: '3층 병동 복도', type: null, name: '세스코 공기살균기', model: 'CESCO UV Sterilizer' },
+    { id: '4F-1', group: '공기살균기', location: '4층 병동 복도', type: null, name: '세스코 공기살균기', model: 'CESCO UV Sterilizer' },
+    { id: '5F-1', group: '공기살균기', location: '5층 병동 복도', type: null, name: '세스코 공기살균기', model: 'CESCO UV Sterilizer' },
+    { id: '6F-1', group: '공기살균기', location: '6층 병동 복도', type: null, name: '세스코 공기살균기', model: 'CESCO UV Sterilizer' },
+    { id: 'B1F-A1', group: '안마의자', location: '지하 1층 에스테틱실', type: null, name: '비욘드 릴렉스', model: '오라클_K3' },
+    { id: 'B1F-B1', group: '안마의자', location: '지하 1층 커뮤니티 룸', type: null, name: '비욘드 릴렉스', model: '아리엘_블랙' },
+    { id: 'B1F-B2', group: '안마의자', location: '지하 1층 커뮤니티 룸', type: null, name: '비욘드 릴렉스', model: '아리엘_블랙' }
+];
+
+// 기존 스프레드시트("세탁기·건조기 수리이력")에 기록되어 있던 수리 이력을 그대로 옮겨온 1회성 초기 데이터입니다.
+const LAUNDRY_REPAIR_SEED = [
+    { date: '2022-09-22', unitId: '3F-4', content: '배수라인 호스교체', cost: 0 },
+    { date: '2022-10-08', unitId: '3F-4', content: '고무패킹 교체', cost: 81000 },
+    { date: '2023-03-09', unitId: '3F-2', content: '고무패킹 교체', cost: 83000 },
+    { date: '2023-11-28', unitId: '5F-2', content: '배수펌프 모터교체', cost: 106000 },
+    { date: '2024-03-28', unitId: '6F-4', content: '배수펌프 모터교체', cost: 106000 },
+    { date: '2024-09-24', unitId: '4F-3', content: '펜 교체', cost: 105000 },
+    { date: '2024-09-26', unitId: '6F-3', content: '배수펌프 모터교체', cost: 65000 },
+    { date: '2025-01-09', unitId: '4F-4', content: '배수펌프 모터 교체', cost: 111000 },
+    { date: '2025-01-23', unitId: '3F-2', content: '배수펌프 모터 교체', cost: 111000 },
+    { date: '2025-01-24', unitId: '3F-3', content: '펜 모터 교체', cost: 0 },
+    { date: '2025-01-31', unitId: '3F-3', content: '주행모터 교체', cost: 225000 },
+    { date: '2025-06-05', unitId: '3F-1', content: '펜 교체', cost: 69500 },
+    { date: '2025-06-25', unitId: '3F-3', content: '응축기 교체', cost: 0 },
+    { date: '2025-07-18', unitId: '6F-4', content: '히터 회로 교체', cost: 71000 },
+    { date: '2025-11-28', unitId: '4F-3', content: '도어 스위치 교체', cost: 52500 },
+    // 원본 스프레드시트에 25/01/07로 기재되어 있던 항목입니다 (25/11/28과 26/02/03 사이 순서상 26/01/07의 오기로 보이니, 확인 후 필요하면 정정해 주세요).
+    { date: '2025-01-07', unitId: '6F-4', content: '배수펌프 교체', cost: 117500 },
+    { date: '2026-02-03', unitId: '6F-3', content: '펜 교체', cost: 116000 },
+    { date: '2026-02-13', unitId: '6F-4', content: '고무패킹 교체', cost: 54000 },
+    { date: '2026-04-16', unitId: '3F-2', content: '배수펌프 교체', cost: 121000 },
+    { date: '2026-05-11', unitId: '4F-4', content: '버튼기판 교체', cost: 117500 },
+    { date: '2026-05-14', unitId: '3F-2', content: '베어링 교체', cost: 242000 },
+    { date: '2026-05-21', unitId: '6F-3', content: '베어링 교체', cost: 0 },
+    { date: '2026-07-01', unitId: '3F-1', content: '펜 교체', cost: 0 },
+    { date: '2026-07-02', unitId: '3F-2', content: '버튼기판 교체', cost: 122000 },
+    { date: '2026-07-21', unitId: '4F-3', content: '펜 교체', cost: 17000 }
+].map(e => ({ ...e, status: '수리완료', note: '' }));
+
+// 기존 스프레드시트("기타 기기 수리이력")에 기록되어 있던 수리 이력을 그대로 옮겨온 1회성 초기 데이터입니다.
+const MISC_REPAIR_SEED = [
+    { date: '2026-05-01', unitId: 'B1F-1', content: '프리필터 교체', cost: 0, note: '업체 관리' },
+    { date: '2026-05-01', unitId: '6F-1', content: '프리필터 교체', cost: 0, note: '업체 관리' },
+    { date: '2026-05-01', unitId: '5F-1', content: '프리필터 교체', cost: 0, note: '업체 관리' },
+    { date: '2026-05-01', unitId: '4F-1', content: '프리필터 교체', cost: 0, note: '업체 관리' },
+    { date: '2026-05-01', unitId: '3F-1', content: '프리필터 교체', cost: 0, note: '업체 관리' },
+    { date: '2023-05-12', unitId: 'B1F-A1', content: '다리 내자 고장/교체', cost: 0, note: '비용 모름' },
+    { date: '2023-06-02', unitId: 'B1F-A1', content: '발판 모터 소음/교체', cost: 0, note: '비용 모름' },
+    { date: '2023-12-05', unitId: 'B1F-A1', content: '리모컨 접촉불량/교체', cost: 0, note: '비용 모름' },
+    { date: '2024-02-13', unitId: 'B1F-A1', content: '리모컨 선 단선/교체', cost: 0, note: '비용 모름' },
+    { date: '2024-08-08', unitId: 'B1F-A1', content: '리모컨 선 단선/교체', cost: 0, note: '비용 모름' },
+    { date: '2024-09-23', unitId: 'B1F-B2', content: '작동 불량/다리 모터 및 커버 교체', cost: 0, note: '비용 모름' },
+    { date: '2025-01-17', unitId: 'B1F-B1', content: '커버 교체', cost: 0, note: '비용 모름' },
+    { date: '2025-02-13', unitId: 'B1F-B1', content: '패드 교체 (등, 보조, 다리)', cost: 429000, note: '' },
+    { date: '2025-08-13', unitId: 'B1F-A1', content: '시트 교체', cost: 242000, note: '' },
+    { date: '2026-05-20', unitId: 'B1F-B2', content: '다리 커버 교체', cost: 187000, note: '' }
+].map(e => ({ ...e, status: '수리완료' }));
+
+const REPAIR_CATEGORIES = {
+    'laundry': { title: '세탁기·건조기', collection: 'laundry_repair_logs', units: LAUNDRY_UNITS, seedData: LAUNDRY_REPAIR_SEED },
+    'misc-equip': { title: '기타 기기', collection: 'misc_repair_logs', units: MISC_UNITS, seedData: MISC_REPAIR_SEED }
+};
+
+let repairLogsCache = {};
+
+// 관리번호 하나의 최근 수리일 / 누적 수리 건수 / 최근 진행상태를 계산
+function computeRepairSummary(unitId, logs) {
+    const matching = logs.filter(l => l.unitId === unitId);
+    if (matching.length === 0) return { lastDate: '-', count: 0, status: null };
+    const sorted = matching.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const last = sorted[sorted.length - 1];
+    return { lastDate: last.date, count: matching.length, status: last.status || '수리완료' };
+}
+
+function getRepairStatusBadge(status) {
+    if (status === '접수') return 'wbadge-overdue';
+    if (status === '진행중') return 'wbadge-soon';
+    if (status === '수리완료') return 'wbadge-normal';
+    return 'wbadge-vendor';
+}
+
+// ---- 관리대장 현황판 ----
+function renderRepairDashboard(cat) {
+    const config = REPAIR_CATEGORIES[cat];
+    const tbody = document.getElementById(`${cat}-dashboard-body`);
+    const colCount = cat === 'laundry' ? 9 : 8;
+    tbody.innerHTML = `<tr><td colspan="${colCount}">데이터를 불러오는 중입니다...</td></tr>`;
+
+    db.collection(config.collection).get().then(snapshot => {
+        const logs = [];
+        snapshot.forEach(doc => logs.push(doc.data()));
+
+        tbody.innerHTML = config.units.map(unit => {
+            const s = computeRepairSummary(unit.id, logs);
+            const statusLabel = s.count === 0 ? '이력없음' : s.status;
+            const badge = s.count === 0 ? 'wbadge-vendor' : getRepairStatusBadge(s.status);
+
+            if (cat === 'laundry') {
+                return `
+                    <tr class="water-row-clickable" onclick="showRepairUnitHistory('${cat}','${unit.id}')">
+                        <td>${unit.group}</td>
+                        <td>${unit.location}</td>
+                        <td><strong>${unit.id}</strong></td>
+                        <td>${unit.type || '-'}</td>
+                        <td>${unit.name}</td>
+                        <td>${unit.model}</td>
+                        <td>${s.lastDate}</td>
+                        <td>${s.count}건</td>
+                        <td><span class="water-status-badge ${badge}">${statusLabel}</span></td>
+                    </tr>
+                `;
+            }
+            return `
+                <tr class="water-row-clickable" onclick="showRepairUnitHistory('${cat}','${unit.id}')">
+                    <td>${unit.group}</td>
+                    <td><strong>${unit.id}</strong></td>
+                    <td>${unit.name}</td>
+                    <td>${unit.model}</td>
+                    <td>${unit.location}</td>
+                    <td>${s.lastDate}</td>
+                    <td>${s.count}건</td>
+                    <td><span class="water-status-badge ${badge}">${statusLabel}</span></td>
+                </tr>
+            `;
+        }).join('');
+    });
+}
+
+// ---- 관리번호별 수리 이력 ----
+function showRepairUnitHistory(cat, unitId) {
+    showPage(`${cat}-history`);
+    const config = REPAIR_CATEGORIES[cat];
+    const unit = config.units.find(u => u.id === unitId);
+    document.getElementById(`${cat}-history-title`).textContent = `📍 ${unitId} 수리 이력${unit ? ` (${unit.name})` : ''}`;
+
+    const tbody = document.getElementById(`${cat}-history-body`);
+    tbody.innerHTML = '<tr><td colspan="5">불러오는 중...</td></tr>';
+
+    db.collection(config.collection).where('unitId', '==', unitId).get().then(snapshot => {
+        const logs = [];
+        snapshot.forEach(doc => logs.push(doc.data()));
+        logs.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+        if (logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5">수리 이력이 없습니다.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = logs.map((l, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td>${l.date}</td>
+                <td style="text-align:left;">${l.content}${l.note ? `<br><small style="color:#6c757d;">${l.note}</small>` : ''}</td>
+                <td>${typeof l.cost === 'number' ? l.cost.toLocaleString() + '원' : (l.cost || '-')}</td>
+                <td><span class="water-status-badge ${getRepairStatusBadge(l.status)}">${l.status || '-'}</span></td>
+            </tr>
+        `).join('');
+    });
+}
+
+// ---- 수리이력 입력 화면 ----
+async function refreshRepairLogsCache(cat) {
+    const config = REPAIR_CATEGORIES[cat];
+    const snapshot = await db.collection(config.collection).get();
+    repairLogsCache[cat] = [];
+    snapshot.forEach(doc => repairLogsCache[cat].push(doc.data()));
+}
+
+async function initRepairLogForm(cat) {
+    const config = REPAIR_CATEGORIES[cat];
+    document.getElementById(`${cat}-log-date`).value = todayStr();
+    document.getElementById(`${cat}-log-content`).value = '';
+    document.getElementById(`${cat}-log-cost`).value = '';
+    document.getElementById(`${cat}-log-note`).value = '';
+    document.getElementById(`${cat}-log-status`).value = '수리완료';
+    document.getElementById(`${cat}-log-result`).textContent = '';
+
+    const select = document.getElementById(`${cat}-log-unit`);
+    select.innerHTML = '<option value="">선택하세요</option>' +
+        config.units.map(u => `<option value="${u.id}">${u.id} (${u.name}${u.location ? ' · ' + u.location : ''})</option>`).join('');
+
+    document.getElementById(`${cat}-log-unit-info`).textContent = '';
+
+    await refreshRepairLogsCache(cat);
+}
+
+function onRepairLogUnitChange(cat) {
+    const unitId = document.getElementById(`${cat}-log-unit`).value;
+    const infoEl = document.getElementById(`${cat}-log-unit-info`);
+    if (!unitId) { infoEl.textContent = ''; return; }
+
+    const config = REPAIR_CATEGORIES[cat];
+    const unit = config.units.find(u => u.id === unitId);
+    if (!unit) { infoEl.textContent = ''; return; }
+
+    const logs = (repairLogsCache[cat] || []).filter(l => l.unitId === unitId);
+    infoEl.textContent = `${unit.name} (${unit.model}) · 위치: ${unit.location} · 누적 수리 ${logs.length}건`;
+}
+
+async function saveRepairLog(cat) {
+    const config = REPAIR_CATEGORIES[cat];
+    const date = document.getElementById(`${cat}-log-date`).value;
+    const unitId = document.getElementById(`${cat}-log-unit`).value;
+    const content = document.getElementById(`${cat}-log-content`).value.trim();
+    const costRaw = document.getElementById(`${cat}-log-cost`).value;
+    const status = document.getElementById(`${cat}-log-status`).value;
+    const note = document.getElementById(`${cat}-log-note`).value.trim();
+    const resultEl = document.getElementById(`${cat}-log-result`);
+
+    if (!date) { alert('수리일자를 선택해 주세요.'); return; }
+    if (!unitId) { alert('관리번호를 선택해 주세요.'); return; }
+    if (!content) { alert('수리 내용을 입력해 주세요.'); return; }
+
+    const cost = costRaw === '' ? 0 : Number(costRaw);
+
+    try {
+        const ref = db.collection(config.collection).doc();
+        await ref.set({
+            date, unitId, content, cost, status, note,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        resultEl.style.color = '#28a745';
+        resultEl.textContent = '✅ 수리 이력이 저장되었습니다!';
+
+        document.getElementById(`${cat}-log-content`).value = '';
+        document.getElementById(`${cat}-log-cost`).value = '';
+        document.getElementById(`${cat}-log-note`).value = '';
+
+        await refreshRepairLogsCache(cat);
+        onRepairLogUnitChange(cat);
+        renderRepairRecentLogs(cat);
+    } catch (err) {
+        console.error(err);
+        resultEl.style.color = '#dc3545';
+        resultEl.textContent = '❌ 저장 실패: ' + err.message;
+    }
+}
+
+function initRepairLogHistoryPage(cat) {
+    const now = new Date();
+    document.getElementById(`${cat}-log-history-month`).value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    renderRepairRecentLogs(cat);
+}
+
+async function renderRepairRecentLogs(cat) {
+    const config = REPAIR_CATEGORIES[cat];
+    const tbody = document.getElementById(`${cat}-recent-log-body`);
+    tbody.innerHTML = '<tr><td colspan="7">데이터를 불러오는 중입니다...</td></tr>';
+
+    const monthStr = document.getElementById(`${cat}-log-history-month`).value;
+
+    const snapshot = await db.collection(config.collection).get();
+    let logs = [];
+    snapshot.forEach(doc => logs.push(doc.data()));
+    if (monthStr) logs = logs.filter(l => l.date && l.date.startsWith(monthStr));
+    logs.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    if (logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7">해당 월에 입력된 기록이 없습니다.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = logs.map(l => {
+        const unit = config.units.find(u => u.id === l.unitId);
+        return `
+            <tr>
+                <td>${l.date}</td>
+                <td>${l.unitId}</td>
+                <td>${unit ? unit.name : '-'}</td>
+                <td style="text-align:left;">${l.content}</td>
+                <td>${typeof l.cost === 'number' ? l.cost.toLocaleString() + '원' : (l.cost || '-')}</td>
+                <td><span class="water-status-badge ${getRepairStatusBadge(l.status)}">${l.status || '-'}</span></td>
+                <td>${l.note || '-'}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// 기존 스프레드시트의 수리 이력을 그대로 옮겨오는 1회성 초기화입니다. (문서ID를 고정해서 다시 눌러도 중복 저장되지 않습니다)
+async function seedRepairInitialData(cat) {
+    const config = REPAIR_CATEGORIES[cat];
+    if (!confirm('기존 스프레드시트의 수리 이력을 불러옵니다. 계속할까요? (이미 불러왔다면 다시 눌러도 중복되지 않습니다)')) return;
+
+    try {
+        const batch = db.batch();
+        config.seedData.forEach(e => {
+            const docId = `seed__${toDocIdSafe(e.unitId)}__${e.date}__${toDocIdSafe(e.content)}`;
+            const ref = db.collection(config.collection).doc(docId);
+            batch.set(ref, {
+                date: e.date,
+                unitId: e.unitId,
+                content: e.content,
+                cost: e.cost || 0,
+                status: e.status || '수리완료',
+                note: e.note || '',
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        });
+        await batch.commit();
+        alert('초기 데이터를 불러왔습니다!');
+        await refreshRepairLogsCache(cat);
+        onRepairLogUnitChange(cat);
+        renderRepairRecentLogs(cat);
+    } catch (err) {
+        console.error(err);
+        alert('불러오기 실패: ' + err.message);
+    }
+}
 
 // =========================================================
 
