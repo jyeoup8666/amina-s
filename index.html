@@ -230,6 +230,9 @@
         tr.water-row-overdue { background-color: #fff5f5; }
         tr.water-row-clickable { cursor: pointer; }
         tr.water-row-clickable:hover { filter: brightness(0.96); }
+        .month-count-pill { display: inline-block; padding: 5px 12px; margin: 3px 6px 3px 0; border-radius: 14px; background: #eef2f8; color: #2b569a; font-size: 13px; font-weight: bold; cursor: pointer; border: 1px solid #dbe6f4; }
+        .month-count-pill:hover { background: #dbe6f4; }
+        .month-count-pill-active { background: #2b569a; color: #fff; border-color: #2b569a; }
         .qr-check-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #eee; }
         .qr-check-label { flex: 1; font-size: 14px; padding-right: 10px; }
         .toggle-pair { display: flex; border-radius: 6px; overflow: hidden; border: 1px solid #ccc; flex-shrink: 0; }
@@ -1102,6 +1105,8 @@
             <button class="toggle-history-btn no-print" onclick="printHistoryPage('landscape')">🖨️ 인쇄 (A4 가로)</button>
         </div>
         <h2 class="no-print">📜 세탁기·건조기 수리이력 입력 이력</h2>
+        <p class="no-print" style="font-size: 13px; color: #6c757d; margin-bottom: 5px;">* 월별 버튼을 누르면 해당 월만, "전체"를 누르면 전체 기록을 볼 수 있습니다.</p>
+        <div id="laundry-log-history-summary" class="no-print" style="margin-bottom: 12px;"></div>
         <p class="no-print">조회할 월: <input type="month" id="laundry-log-history-month" onchange="renderRepairRecentLogs('laundry')"></p>
         <div style="overflow-x: auto;">
             <table>
@@ -1223,6 +1228,8 @@
             <button class="toggle-history-btn no-print" onclick="printHistoryPage('landscape')">🖨️ 인쇄 (A4 가로)</button>
         </div>
         <h2 class="no-print">📜 기타 기기 수리이력 입력 이력</h2>
+        <p class="no-print" style="font-size: 13px; color: #6c757d; margin-bottom: 5px;">* 월별 버튼을 누르면 해당 월만, "전체"를 누르면 전체 기록을 볼 수 있습니다.</p>
+        <div id="misc-equip-log-history-summary" class="no-print" style="margin-bottom: 12px;"></div>
         <p class="no-print">조회할 월: <input type="month" id="misc-equip-log-history-month" onchange="renderRepairRecentLogs('misc-equip')"></p>
         <div style="overflow-x: auto;">
             <table>
@@ -5887,8 +5894,42 @@ async function saveRepairLog(cat) {
 }
 
 function initRepairLogHistoryPage(cat) {
-    const now = new Date();
-    document.getElementById(`${cat}-log-history-month`).value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    // 특정 월을 미리 골라두면 그 달에 기록이 없을 때 "확인할 게 없다"는 인상을 주므로,
+    // 처음 들어왔을 때는 월 필터를 비워두고 전체 기록 + 월별 건수 요약을 바로 보여줍니다.
+    document.getElementById(`${cat}-log-history-month`).value = '';
+    renderRepairRecentLogs(cat);
+}
+
+// 전체 로그를 월(YYYY-MM) 단위로 묶어 건수를 세고, 눌러서 바로 그 달로 필터링할 수 있는
+// 알약(pill) 버튼들을 그려줍니다. 기록이 하나도 없는 달은 애초에 셀 것도 없으니 자연히 표시되지 않습니다.
+function renderMonthlySummary(cat, allLogs) {
+    const el = document.getElementById(`${cat}-log-history-summary`);
+    if (!el) return;
+
+    if (allLogs.length === 0) {
+        el.innerHTML = '<span style="color:#6c757d; font-size:13px;">저장된 수리 이력이 없습니다.</span>';
+        return;
+    }
+
+    const counts = {};
+    allLogs.forEach(l => {
+        if (!l.date) return;
+        const m = l.date.substring(0, 7);
+        counts[m] = (counts[m] || 0) + 1;
+    });
+    const months = Object.keys(counts).sort().reverse();
+    const currentFilter = document.getElementById(`${cat}-log-history-month`).value;
+
+    const allPill = `<span class="month-count-pill${!currentFilter ? ' month-count-pill-active' : ''}" onclick="filterRepairLogsByMonth('${cat}', '')">전체 ${allLogs.length}건</span>`;
+    const monthPills = months.map(m => `
+        <span class="month-count-pill${currentFilter === m ? ' month-count-pill-active' : ''}" onclick="filterRepairLogsByMonth('${cat}', '${m}')">${m} (${counts[m]}건)</span>
+    `).join('');
+
+    el.innerHTML = allPill + monthPills;
+}
+
+function filterRepairLogsByMonth(cat, month) {
+    document.getElementById(`${cat}-log-history-month`).value = month;
     renderRepairRecentLogs(cat);
 }
 
@@ -5902,8 +5943,11 @@ async function renderRepairRecentLogs(cat) {
     const snapshot = await db.collection(config.collection).get();
     let logs = [];
     snapshot.forEach(doc => logs.push(doc.data()));
-    if (monthStr) logs = logs.filter(l => l.date && l.date.startsWith(monthStr));
     logs.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    renderMonthlySummary(cat, logs);
+
+    if (monthStr) logs = logs.filter(l => l.date && l.date.startsWith(monthStr));
 
     if (logs.length === 0) {
         tbody.innerHTML = '<tr><td colspan="7">해당 월에 입력된 기록이 없습니다.</td></tr>';
